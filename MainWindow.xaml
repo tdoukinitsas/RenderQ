@@ -1,0 +1,34 @@
+﻿<Window x:Class="MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:cr_RenderQ"
+        Loaded="OnLoad"
+        Icon="CrQ32.ico"
+        mc:Ignorable="d"
+        Title="Creativity Tools | RenderQ   " Height="450" Width="800" Background="#FF222527" FontFamily="ubuntu" FontWeight="Medium" MinWidth="640" MinHeight="256">
+    <Grid Margin="10">
+
+        <Button x:Name="btnRender" Content="Render Jobs" HorizontalAlignment="Right" VerticalAlignment="Top" Width="101" RenderTransformOrigin="0.5,0.5" BorderBrush="#FF90F302" Background="#FF67BC01" Foreground="White" Grid.Column="1" Height="18"/>
+
+        <ListView x:Name="ScriptList" Margin="0,23,0,81" BorderBrush="#FF36464E" Foreground="#FF02A8F3" Background="#FF262E32"/>
+        <Button x:Name="onAdd" Content="Add File" HorizontalAlignment="Left" Margin="0" VerticalAlignment="Top" Width="75" Background="#FF0176BC" BorderBrush="#FF02A8F3" Foreground="White" Click="Button_Click" Height="18"/>
+        <Button x:Name="onClear" Content="Clear List" HorizontalAlignment="Left" Margin="260,0,0,0" VerticalAlignment="Top" Width="75" Background="#FFBC0101" BorderBrush="#FFF30202" Foreground="White" RenderTransformOrigin="2.08,6.5" Height="18"/>
+        <Label x:Name="versionLabel" HorizontalContentAlignment="Right" Content="Label" VerticalAlignment="Bottom" Foreground="#FF697B83" Height="24" RenderTransformOrigin="0.5,0.5" Margin="569,0,0,0">
+
+        </Label>
+        <TextBox x:Name="nukePathBox" HorizontalAlignment="Left" Height="18" Margin="131,0,0,2" TextWrapping="Wrap" Text="C:\Program Files\Nuke11.1v1\" VerticalAlignment="Bottom" Width="318" BorderBrush="#FF36464E" Background="#FF262E32" Foreground="#FF697B83" SelectionBrush="#FF0176BC"/>
+        <Label x:Name="LabelNukePath" Content="Path to Nuke .exe:" HorizontalAlignment="Left" VerticalAlignment="Bottom" Foreground="#FF697B83" Height="24" Width="126"/>
+        <TextBox x:Name="nukeExeBox" HorizontalAlignment="Left" Height="18" Margin="454,0,0,2" TextWrapping="Wrap" Text="Nuke11.1.exe" VerticalAlignment="Bottom" Width="87" BorderBrush="#FF36464E" Background="#FF262E32" Foreground="#FF697B83" SelectionBrush="#FF0176BC"/>
+        <Button x:Name="onSaveList" Content="Save List" HorizontalAlignment="Left" Margin="90,0,0,0" VerticalAlignment="Top" Width="75" Background="#FF0176BC" BorderBrush="#FF02A8F3" Foreground="White" RenderTransformOrigin="2.08,6.5" Height="18"/>
+        <Button x:Name="onLoadList" Content="Load List" HorizontalAlignment="Left" Margin="170,0,0,0" VerticalAlignment="Top" Width="75" Background="#FF0176BC" BorderBrush="#FF02A8F3" Foreground="White" RenderTransformOrigin="2.08,6.5" Height="18"/>
+        <TextBox x:Name="BlenderPathBox" HorizontalAlignment="Left" Height="18" Margin="131,0,0,25" TextWrapping="Wrap" Text="C:\Program Files\Blender Foundation\Blender 2.93" VerticalAlignment="Bottom" Width="318" BorderBrush="#FF36464E" Background="#FF262E32" Foreground="#FF697B83" SelectionBrush="#FF0176BC"/>
+        <Label x:Name="LabelNukePath_Copy" Content="Path to Blender  .exe:" HorizontalAlignment="Left" VerticalAlignment="Bottom" Foreground="#FF697B83" Height="24" Width="126" Margin="0,0,0,23"/>
+        <TextBox x:Name="BlenderExeBox" HorizontalAlignment="Left" Height="18" Margin="454,0,0,25" TextWrapping="Wrap" Text="blender.exe" VerticalAlignment="Bottom" Width="87" BorderBrush="#FF36464E" Background="#FF262E32" Foreground="#FF697B83" SelectionBrush="#FF0176BC"/>
+        <Label x:Name="versionLabel_Copy" HorizontalContentAlignment="Right" Content="site.creativityfilms.gr/tools" VerticalAlignment="Bottom" Foreground="#FF697B83" Height="24" RenderTransformOrigin="0.5,0.5" Margin="569,0,0,23"/>
+        <ProgressBar x:Name="progressBar1" Height="10" Margin="0,0,0,57" VerticalAlignment="Bottom" Foreground="#FF0176BC" BorderBrush="#FF36464E" Background="#FF262E32"/>
+
+
+    </Grid>
+</Window>
