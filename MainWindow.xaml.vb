@@ -59,9 +59,9 @@ Class MainWindow
         Try
 
 
-            ScriptList.Items.Item(e.UserState - 1).Foreground = New SolidColorBrush(Colors.Orange)
+            ScriptList.Items.Item(e.UserState - 1).Foreground = New SolidColorBrush(Color.FromRgb(255, 152, 0))
 
-            ScriptList.Items.Item(e.UserState - 2).Foreground = New SolidColorBrush(Color.FromRgb(103, 188, 1))
+            ScriptList.Items.Item(e.UserState - 2).Foreground = New SolidColorBrush(Color.FromRgb(174, 234, 0))
 
         Catch ex As Exception
 
@@ -76,8 +76,8 @@ Class MainWindow
         btnRender.IsHitTestVisible = True
         btnRender.Content = "Render Jobs"
         progressBar1.Value = 100
-        progressBar1.Foreground = New SolidColorBrush(Color.FromRgb(103, 188, 1))
-        ScriptList.Items.Item(ScriptList.Items.Count - 1).Foreground = New SolidColorBrush(Color.FromRgb(103, 188, 1))
+        progressBar1.Foreground = New SolidColorBrush(Color.FromRgb(174, 234, 0))
+        ScriptList.Items.Item(ScriptList.Items.Count - 1).Foreground = New SolidColorBrush(Color.FromRgb(174, 234, 0))
     End Sub
 
     Public Class ArgumentType
