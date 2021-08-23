@@ -18,9 +18,12 @@
             <RowDefinition Height="76"/>
         </Grid.RowDefinitions>
 
+
+
         <Button x:Name="btnRender"  materialDesign:ButtonAssist.CornerRadius="10" Content="Render Jobs" HorizontalAlignment="Right" VerticalAlignment="Top" Width="128" RenderTransformOrigin="0.5,0.5" BorderBrush="#FFAEEA00" Background="#FFAEEA00" Foreground="Black" Height="30"/>
 
         <ListView x:Name="ScriptList" Margin="0,0,0,0" BorderBrush="#FF36464E" Foreground="#FF02A8F3" Background="#FF262E32" Grid.Row="1"/>
+        
         <Button x:Name="onAdd" Style="{StaticResource MaterialDesignFlatButton}"  materialDesign:ButtonAssist.CornerRadius="10" Content="Add File" HorizontalAlignment="Left" Margin="0" VerticalAlignment="Top" Width="128" Click="Button_Click" Height="30" Foreground="#FF02A8F3"/>
 
         <Button  Style="{StaticResource MaterialDesignFlatButton}"  materialDesign:ButtonAssist.CornerRadius="10" x:Name="onClear" Content="Clear List" HorizontalAlignment="Left" Margin="399,0,0,0" VerticalAlignment="Top" Width="128" Foreground="#FFF44336" RenderTransformOrigin="2.08,6.5" Height="30"/>
