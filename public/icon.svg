@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #f1c21b;
+      }
+
+      .cls-2 {
+        fill: #4589ff;
+      }
+    </style>
+  </defs>
+  <g id="Dynamic_Progress">
+    <path class="cls-1" d="M540,540V71.95c256.77,0,468.05,211.29,468.05,468.05s-211.29,468.05-468.05,468.05c-256.77,0-468.05-211.29-468.05-468.05h468.05Z"/>
+  </g>
+  <g id="Dot">
+    <circle class="cls-2" cx="540" cy="540" r="301.24"/>
+  </g>
+  <rect class="cls-1" x="592.12" y="717.81" width="418.2" height="166.81" transform="translate(801.22 -331.88) rotate(45)"/>
+</svg>

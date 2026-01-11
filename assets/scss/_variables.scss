@@ -1,0 +1,113 @@
+// IBM Carbon Design System inspired variables with dark theme
+// Using a light saturated blue as the accent color
+
+// Color Palette
+$carbon-gray-100: #161616;
+$carbon-gray-90: #262626;
+$carbon-gray-80: #393939;
+$carbon-gray-70: #525252;
+$carbon-gray-60: #6f6f6f;
+$carbon-gray-50: #8d8d8d;
+$carbon-gray-40: #a8a8a8;
+$carbon-gray-30: #c6c6c6;
+$carbon-gray-20: #e0e0e0;
+$carbon-gray-10: #f4f4f4;
+
+// Accent colors - Light saturated blue
+$accent-primary: #4589ff;
+$accent-primary-hover: #5a9bff;
+$accent-primary-active: #3078ff;
+$accent-secondary: #0f62fe;
+
+// Status colors
+$status-idle: $accent-primary;
+$status-rendering: #f1c21b;
+$status-complete: #42be65;
+$status-error: #fa4d56;
+$status-paused: #ff832b;
+
+// Application colors (for render queue app type tags)
+$app-blender: #ff9966;          // Baby orange (orange + white)
+$app-cinema4d: #3b82f6;         // Bright blue
+$app-houdini: #ff6b35;          // Orange
+$app-aftereffects: #9d4edd;     // Purple
+$app-nuke: #fbbf24;             // Yellow
+
+// Application colors map (for dynamic use)
+$app-colors: (
+  'blender': $app-blender,
+  'cinema4d': $app-cinema4d,
+  'houdini': $app-houdini,
+  'aftereffects': $app-aftereffects,
+  'nuke': $app-nuke
+);
+
+// Background colors
+$bg-primary: $carbon-gray-100;
+$bg-secondary: $carbon-gray-90;
+$bg-tertiary: $carbon-gray-80;
+$bg-hover: $carbon-gray-70;
+
+// Text colors
+$text-primary: $carbon-gray-10;
+$text-secondary: $carbon-gray-30;
+$text-tertiary: $carbon-gray-50;
+$text-disabled: $carbon-gray-60;
+
+// Border colors
+$border-subtle: $carbon-gray-80;
+$border-strong: $carbon-gray-60;
+
+// Interactive states
+$interactive-hover: rgba($accent-primary, 0.1);
+$interactive-active: rgba($accent-primary, 0.2);
+$interactive-selected: rgba($accent-primary, 0.3);
+
+// Spacing
+$spacing-01: 0.125rem;
+$spacing-02: 0.25rem;
+$spacing-03: 0.5rem;
+$spacing-04: 0.75rem;
+$spacing-05: 1rem;
+$spacing-06: 1.5rem;
+$spacing-07: 2rem;
+$spacing-08: 2.5rem;
+$spacing-09: 3rem;
+
+// Typography
+$font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+$font-family-mono: 'IBM Plex Mono', 'Consolas', 'Monaco', monospace;
+
+$font-size-xs: 0.75rem;
+$font-size-sm: 0.875rem;
+$font-size-base: 1rem;
+$font-size-lg: 1.125rem;
+$font-size-xl: 1.25rem;
+$font-size-2xl: 1.5rem;
+$font-size-3xl: 2rem;
+
+$font-weight-light: 300;
+$font-weight-regular: 400;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+
+// Border radius
+$radius-sm: 2px;
+$radius-md: 4px;
+$radius-lg: 8px;
+
+// Shadows
+$shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+$shadow-md: 0 2px 6px rgba(0, 0, 0, 0.3);
+$shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4);
+
+// Transitions
+$transition-fast: 70ms;
+$transition-base: 150ms;
+$transition-slow: 240ms;
+
+// Z-index layers
+$z-dropdown: 100;
+$z-modal: 200;
+$z-notification: 300;
+$z-tooltip: 400;

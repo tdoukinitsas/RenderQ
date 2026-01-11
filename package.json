@@ -1,0 +1,120 @@
+{
+  "name": "renderq",
+  "version": "2.0.0",
+  "description": "A desktop application for managing multi-application render queues - Blender, Cinema 4D, Houdini, After Effects, and Nuke",
+  "main": "electron/main.js",
+  "author": "RenderQ",
+  "license": "MIT",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "generate:electron": "cross-env NUXT_APP_BASE_URL=./ NUXT_APP_CDN_URL=./ nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "electron:dev": "concurrently \"nuxt dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "npm run generate:electron && electron-builder",
+    "electron:preview": "npm run generate:electron && electron ."
+  },
+  "dependencies": {
+    "@carbon/icons-vue": "^10.92.0",
+    "@pinia/nuxt": "^0.5.1",
+    "electron-store": "^8.1.0",
+    "node-notifier": "^10.0.1",
+    "pinia": "^2.1.7",
+    "sharp": "^0.34.5",
+    "systeminformation": "^5.21.20",
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.0"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "^1.0.8",
+    "@types/node": "^20.11.24",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "nuxt": "^3.10.3",
+    "sass": "^1.71.1",
+    "typescript": "^5.3.3",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.renderq.app",
+    "productName": "RenderQ",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "assets/icon.png",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": ".output/public",
+        "to": "resources/app/.output/public",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "assets",
+        "to": "resources/app/assets",
+        "filter": [
+          "icon.png",
+          "icon.svg"
+        ]
+      }
+    ],
+    "asar": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "publish": ["github"]
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.productivity",
+      "publish": ["github"]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "rpm",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility",
+      "publish": ["github"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
