@@ -97,6 +97,7 @@
       "publish": ["github"]
     },
     "linux": {
+      "maintainer": "Thomas Doukinitsas <creativityfilms@gmail.com>",
       "target": [
         {
           "target": "AppImage",
