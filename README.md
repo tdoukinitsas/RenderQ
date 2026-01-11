@@ -223,7 +223,7 @@ nuke -F 1-100 -X Write1 script.nk  # Specific write node
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+GNU AFFERO GENERAL PUBLIC LICENSE v3 - see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
