@@ -647,16 +647,17 @@ onMounted(async () => {
     
     // Auto-select first installation for other apps if not already set
     if (!settings.applicationPaths?.cinema4d && cinema4dInstalls?.length > 0) {
-      settings.setAppPath(ApplicationType.CINEMA4D, cinema4dInstalls[0].path);
+      settings.setAppPath(ApplicationType.CINEMA4D, cinema4dInstalls[0].commandLinePath || cinema4dInstalls[0].path);
     }
     if (!settings.applicationPaths?.houdini && houdiniInstalls?.length > 0) {
-      settings.setAppPath(ApplicationType.HOUDINI, houdiniInstalls[0].path);
+      settings.setAppPath(ApplicationType.HOUDINI, houdiniInstalls[0].commandLinePath || houdiniInstalls[0].path);
     }
     if (!settings.applicationPaths?.aftereffects && aeInstalls?.length > 0) {
-      settings.setAppPath(ApplicationType.AFTER_EFFECTS, aeInstalls[0].path);
+      // For After Effects, prefer commandLinePath (aerender.exe) over path (AfterFX.exe)
+      settings.setAppPath(ApplicationType.AFTER_EFFECTS, aeInstalls[0].commandLinePath || aeInstalls[0].path);
     }
     if (!settings.applicationPaths?.nuke && nukeInstalls?.length > 0) {
-      settings.setAppPath(ApplicationType.NUKE, nukeInstalls[0].path);
+      settings.setAppPath(ApplicationType.NUKE, nukeInstalls[0].commandLinePath || nukeInstalls[0].path);
     }
     
     // Validate jobs now that we have installations
@@ -705,16 +706,21 @@ function setupRenderListeners() {
   
   api.onFrameRendered(async (data: any) => {
     if (renderQueue.currentJob && renderQueue.currentJob.id === data.jobId) {
-      // Update frame timing
+      // Update frame timing and progress
       const job = renderQueue.currentJob;
       if (job.renderStartTime) {
         const elapsed = Date.now() - job.renderStartTime;
-        const avgFrameTime = elapsed / (data.currentFrameIndex + 1);
-        const remaining = (data.totalFrames - data.currentFrameIndex - 1) * avgFrameTime;
+        const framesComplete = data.currentFrameIndex + 1;
+        const avgFrameTime = elapsed / framesComplete;
+        const remaining = (data.totalFrames - framesComplete) * avgFrameTime;
+        
+        // Calculate progress: completed frames / total frames
+        const progress = (framesComplete / data.totalFrames) * 100;
         
         renderQueue.updateJob(data.jobId, {
           lastRenderedFrame: data.outputPath,
-          currentFrame: data.currentFrameIndex + 1,
+          currentFrame: framesComplete,
+          progress,
           elapsedTime: elapsed,
           estimatedTimeRemaining: remaining,
           frameTimes: [...job.frameTimes, avgFrameTime],
@@ -1025,6 +1031,31 @@ async function loadSceneFiles(filePaths: string[]) {
       // Get the appropriate app path
       const appPath = getAppPathForType(appType);
       
+      // Extract filename for display
+      const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Unknown';
+      
+      // Add placeholder job immediately with 'loading' status
+      const placeholderJobId = renderQueue.generateId();
+      renderQueue.addJob({
+        id: placeholderJobId,
+        filePath,
+        fileName,
+        applicationType: appType,
+        appExecutablePath: appPath,
+        status: 'loading',
+        // Placeholder values - will be updated when metadata is fetched
+        originalFrameStart: 1,
+        originalFrameEnd: 1,
+        frameRanges: '1-1',
+        outputPath: '',
+        outputDir: '',
+        renderEngine: getDefaultRenderEngine(appType),
+        format: 'PNG',
+        resolution: { x: 1920, y: 1080, percentage: 100 },
+        fps: 24,
+        isVideoOutput: false,
+      });
+      
       let info: any;
       
       // Use unified scene info if available, fallback to Blender-specific
@@ -1037,6 +1068,10 @@ async function loadSceneFiles(filePaths: string[]) {
         
         if (!info.success) {
           console.error('Error getting scene info:', info.error);
+          renderQueue.updateJob(placeholderJobId, {
+            status: 'error',
+            error: info.error || 'Failed to fetch scene metadata',
+          });
           continue;
         }
       } else {
@@ -1047,13 +1082,9 @@ async function loadSceneFiles(filePaths: string[]) {
         });
       }
       
-      const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Unknown';
-      
-      renderQueue.addJob({
-        filePath,
-        fileName,
-        applicationType: appType,
-        appExecutablePath: appPath,
+      // Update the placeholder job with actual scene data
+      renderQueue.updateJob(placeholderJobId, {
+        status: 'idle',
         originalFrameStart: info.frameStart,
         originalFrameEnd: info.frameEnd,
         frameRanges: `${info.frameStart}-${info.frameEnd}`,
@@ -1199,14 +1230,16 @@ function startJobRender(job: RenderJob) {
   
   // Use new multi-app render if available
   if (api.startAppRender) {
-    api.startAppRender({
+    // Convert reactive objects to plain objects for IPC serialization
+    const renderParams = JSON.parse(JSON.stringify({
       appPath,
       sceneFile: job.filePath,
       frameRanges: frameRange,
       jobId: job.id,
       appType,
       appSettings: getAppSettingsForJob(job),
-    });
+    }));
+    api.startAppRender(renderParams);
   } else {
     // Legacy: Blender only
     api.startRender({
@@ -1549,6 +1582,7 @@ function parseFrameRanges(rangeString: string): number[] {
   display: flex;
   flex-direction: column;
   gap: $spacing-02;
+  padding: 0 $spacing-05;
 }
 
 .progress-info {

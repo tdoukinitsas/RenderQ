@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const Store = require('electron-store');
 const sharp = require('sharp');
+const { autoUpdater } = require('electron-updater');
 
 // Application type constants (mirroring types/applications.ts)
 const ApplicationType = {
@@ -186,7 +187,94 @@ function createApplicationMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-app.whenReady().then(createWindow);
+// ============================================================
+// AUTO-UPDATER SETUP
+// ============================================================
+
+function setupAutoUpdater() {
+  // Configure auto-updater
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('Checking for updates...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('Update available:', info.version);
+    
+    // Show dialog to ask user if they want to download
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Available',
+      message: `A new version (${info.version}) is available!`,
+      detail: 'Would you like to download and install it now?',
+      buttons: ['Download', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    }).then((result) => {
+      if (result.response === 0) {
+        autoUpdater.downloadUpdate();
+      }
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('No updates available');
+  });
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    console.log(`Download progress: ${Math.round(progressObj.percent)}%`);
+    
+    // Update taskbar progress on Windows
+    if (mainWindow && process.platform === 'win32') {
+      mainWindow.setProgressBar(progressObj.percent / 100);
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('Update downloaded:', info.version);
+    
+    // Reset taskbar progress
+    if (mainWindow && process.platform === 'win32') {
+      mainWindow.setProgressBar(-1);
+    }
+    
+    // Show dialog to ask user if they want to install now
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Ready',
+      message: `Version ${info.version} has been downloaded.`,
+      detail: 'The update will be installed when you quit the application. Would you like to restart now?',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    }).then((result) => {
+      if (result.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
+  autoUpdater.on('error', (error) => {
+    console.error('Auto-updater error:', error);
+  });
+
+  // Check for updates (only in production)
+  if (!isDev && app.isPackaged) {
+    // Delay update check to not interfere with app startup
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch((err) => {
+        console.error('Failed to check for updates:', err);
+      });
+    }, 5000);
+  }
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  setupAutoUpdater();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -1949,6 +2037,54 @@ ipcMain.handle('save-settings', async (event, settings) => {
   return { success: true };
 });
 
+// ============================================================
+// AUTO-UPDATE IPC HANDLERS
+// ============================================================
+
+// Check for updates manually
+ipcMain.handle('check-for-updates', async () => {
+  if (isDev || !app.isPackaged) {
+    return { success: false, error: 'Updates only available in production builds' };
+  }
+  
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { 
+      success: true, 
+      updateAvailable: result?.updateInfo?.version !== app.getVersion(),
+      currentVersion: app.getVersion(),
+      latestVersion: result?.updateInfo?.version 
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Download available update
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Install downloaded update
+ipcMain.handle('install-update', async () => {
+  try {
+    autoUpdater.quitAndInstall();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Get current app version
+ipcMain.handle('get-app-version', async () => {
+  return app.getVersion();
+});
+
 // Show notification
 ipcMain.handle('show-notification', async (event, { title, message }) => {
   const notifier = require('node-notifier');
@@ -2110,6 +2246,26 @@ ipcMain.handle('read-video', async (event, videoPath) => {
 ipcMain.handle('open-in-explorer', async (event, filePath) => {
   shell.showItemInFolder(filePath);
   return { success: true };
+});
+
+// Open file with default application (e.g., double-click behavior)
+ipcMain.handle('open-file-with-default-app', async (event, filePath) => {
+  try {
+    await shell.openPath(filePath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Open folder in file explorer
+ipcMain.handle('open-folder', async (event, folderPath) => {
+  try {
+    await shell.openPath(folderPath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 // Helper function to parse frame ranges like "1-10,20-30,50"

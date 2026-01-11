@@ -4,9 +4,48 @@
     :class="[`job-item--${job.status}`, { 'job-item--dragging': isDragging, 'job-item--selected': isSelected }]"
     :draggable="draggable && job.status !== 'rendering'"
     @click="handleClick"
+    @contextmenu.prevent="handleContextMenu"
     @dragstart="handleDragStart"
     @dragend="handleDragEnd"
   >
+    <!-- Context Menu -->
+    <div 
+      v-if="showContextMenu" 
+      class="context-menu" 
+      :style="contextMenuPosition"
+      @click.stop
+    >
+      <button class="context-menu__item" @click="openOutputFolder">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+        </svg>
+        <span>Open Output Folder</span>
+      </button>
+      <button class="context-menu__item" @click="openProjectFolder">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10H6v-2h8v2zm4-4H6v-2h12v2z"/>
+        </svg>
+        <span>Open Project Folder</span>
+      </button>
+      <button class="context-menu__item" @click="openProject">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+        </svg>
+        <span>Open Project in {{ appLabel }}</span>
+      </button>
+      <div class="context-menu__divider"></div>
+      <button 
+        class="context-menu__item" 
+        @click="resetJob"
+        :disabled="job.status === 'rendering' || job.status === 'idle'"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+        </svg>
+        <span>Reset to Pending</span>
+      </button>
+    </div>
+
     <div class="job-item__header">
       <div 
         class="job-item__drag-handle" 
@@ -66,17 +105,22 @@
         <div 
           class="progress-bar__fill" 
           :class="[`progress-bar__fill--${job.status}`]"
-          :style="{ width: `${job.progress}%` }"
+          :style="{ width: job.status === 'loading' ? '100%' : `${job.progress}%` }"
         />
       </div>
       <div class="job-item__progress-info">
         <span class="job-item__progress-text">
-          {{ Math.round(job.progress) }}%
-          <template v-if="job.status === 'rendering' || job.status === 'paused'">
-            • Frame {{ job.currentFrame }} / {{ job.totalFrames }}
+          <template v-if="job.status === 'loading'">
+            Loading...
+          </template>
+          <template v-else>
+            {{ Math.round(job.progress) }}%
+            <template v-if="job.status === 'rendering' || job.status === 'paused'">
+              • Frame {{ job.currentFrame }} / {{ job.totalFrames }}
+            </template>
           </template>
         </span>
-        <span v-if="job.estimatedTimeRemaining > 0" class="job-item__eta">
+        <span v-if="job.estimatedTimeRemaining > 0 && job.status !== 'loading'" class="job-item__eta">
           ETA: {{ formatTime(job.estimatedTimeRemaining) }}
         </span>
       </div>
@@ -163,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import type { RenderJob } from '~/stores/renderQueue';
 import { ApplicationType, APPLICATION_INFO } from '~/types/applications';
 
@@ -183,10 +227,13 @@ const emit = defineEmits<{
   (e: 'dragstart', event: DragEvent): void;
   (e: 'dragend', event: DragEvent): void;
   (e: 'select'): void;
+  (e: 'reset'): void;
 }>();
 
 const expanded = ref(false);
 const isDragging = ref(false);
+const showContextMenu = ref(false);
+const contextMenuPosition = ref({ top: '0px', left: '0px' });
 
 const statusLabel = computed(() => {
   switch (props.job.status) {
@@ -196,8 +243,18 @@ const statusLabel = computed(() => {
     case 'complete': return 'Complete';
     case 'error': return 'Error';
     case 'missing-app': return 'Missing App';
+    case 'loading': return loadingLabel.value;
     default: return props.job.status;
   }
+});
+
+// Loading label - different text for After Effects/Nuke (comp) vs others (scene)
+const loadingLabel = computed(() => {
+  const appType = props.job.applicationType || ApplicationType.BLENDER;
+  if (appType === ApplicationType.AFTER_EFFECTS || appType === ApplicationType.NUKE) {
+    return 'Fetching comp metadata...';
+  }
+  return 'Fetching scene metadata...';
 });
 
 // Application type display
@@ -280,15 +337,84 @@ function openOutputFolder() {
   if (typeof window !== 'undefined' && (window as any).electronAPI) {
     (window as any).electronAPI.openInExplorer(props.job.outputDir);
   }
+  closeContextMenu();
 }
+
+// Context menu handlers
+function handleContextMenu(e: MouseEvent) {
+  e.preventDefault();
+  
+  // Get the bounding rect of the job item to position the menu
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  
+  // Position the menu at the click point, but relative to the item
+  contextMenuPosition.value = {
+    top: `${e.clientY - rect.top}px`,
+    left: `${e.clientX - rect.left}px`
+  };
+  
+  showContextMenu.value = true;
+  
+  // Close menu when clicking elsewhere
+  setTimeout(() => {
+    document.addEventListener('click', closeContextMenu, { once: true });
+    document.addEventListener('contextmenu', closeContextMenu, { once: true });
+  }, 0);
+}
+
+function closeContextMenu() {
+  showContextMenu.value = false;
+}
+
+function openProjectFolder() {
+  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+    // Get the directory containing the project file
+    const filePath = props.job.filePath;
+    (window as any).electronAPI.openInExplorer(filePath);
+  }
+  closeContextMenu();
+}
+
+function openProject() {
+  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+    // Open the project file with its default application (like double-clicking)
+    (window as any).electronAPI.openFileWithDefaultApp(props.job.filePath);
+  }
+  closeContextMenu();
+}
+
+function resetJob() {
+  if (props.job.status !== 'rendering' && props.job.status !== 'idle') {
+    emit('update', {
+      status: 'idle',
+      progress: 0,
+      currentFrame: 0,
+      elapsedTime: 0,
+      estimatedTimeRemaining: 0,
+      lastRenderedFrame: null,
+      error: null,
+      renderStartTime: null,
+      frameTimes: [],
+      renderedFramePaths: [],
+    });
+  }
+  closeContextMenu();
+}
+
+// Cleanup on unmount
+onUnmounted(() => {
+  document.removeEventListener('click', closeContextMenu);
+  document.removeEventListener('contextmenu', closeContextMenu);
+});
 </script>
 
 <style lang="scss">
 .job-item {
+  position: relative;
   background-color: $bg-tertiary;
   border: 1px solid $border-subtle;
   border-radius: $radius-lg;
-  overflow: hidden;
+  overflow: visible;
   transition: border-color $transition-fast ease, opacity $transition-fast ease, transform $transition-fast ease;
   
   &:hover {
@@ -342,6 +468,15 @@ function openOutputFolder() {
     
     .job-item__name {
       color: $status-paused;
+    }
+  }
+  
+  &--loading {
+    border-color: $text-tertiary;
+    opacity: 0.8;
+    
+    .job-item__name {
+      color: $text-secondary;
     }
   }
   
@@ -559,6 +694,53 @@ function openOutputFolder() {
   span {
     font-size: $font-size-sm;
     color: $text-primary;
+  }
+}
+
+.context-menu {
+  position: absolute;
+  z-index: 1000;
+  min-width: 200px;
+  background-color: $bg-secondary;
+  border: 1px solid $border-subtle;
+  border-radius: $radius-md;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  padding: $spacing-02;
+  
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: $spacing-03;
+    width: 100%;
+    padding: $spacing-03 $spacing-04;
+    background: none;
+    border: none;
+    border-radius: $radius-sm;
+    color: $text-primary;
+    font-size: $font-size-sm;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color $transition-fast ease;
+    
+    &:hover:not(:disabled) {
+      background-color: rgba($accent-primary, 0.1);
+    }
+    
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    svg {
+      flex-shrink: 0;
+      color: $text-secondary;
+    }
+  }
+  
+  &__divider {
+    height: 1px;
+    background-color: $border-subtle;
+    margin: $spacing-02 0;
   }
 }
 </style>

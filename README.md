@@ -4,6 +4,8 @@ A desktop application for managing render queues across multiple 3D and composit
 
 ![RenderQ](public/renderq-screenshot.jpg)
 
+Built with AI Assistance from Github Copilot using Claude Opus 4.5, Claude Sonnet 4.5 and GPT 5.2
+
 ## Supported Applications
 
 | Application | Extensions | Platforms |

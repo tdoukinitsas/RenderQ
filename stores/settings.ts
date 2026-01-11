@@ -163,7 +163,8 @@ export const useSettingsStore = defineStore('settings', {
 
     async saveSettings() {
       if (typeof window !== 'undefined' && (window as any).electronAPI) {
-        await (window as any).electronAPI.saveSettings({
+        // Convert reactive objects to plain objects for IPC serialization
+        const plainSettings = JSON.parse(JSON.stringify({
           // Legacy
           blenderPath: this.blenderPath,
           
@@ -178,7 +179,8 @@ export const useSettingsStore = defineStore('settings', {
           
           // App-specific
           appSettings: this.appSettings,
-        });
+        }));
+        await (window as any).electronAPI.saveSettings(plainSettings);
       }
     },
 

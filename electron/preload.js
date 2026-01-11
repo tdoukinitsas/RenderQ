@@ -65,6 +65,14 @@ window.electronAPI = {
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
   
   // ============================================================
+  // AUTO-UPDATE
+  // ============================================================
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  
+  // ============================================================
   // NOTIFICATIONS
   // ============================================================
   showNotification: (params) => ipcRenderer.invoke('show-notification', params),
@@ -75,6 +83,8 @@ window.electronAPI = {
   watchOutputDir: (outputDir) => ipcRenderer.invoke('watch-output-dir', outputDir),
   readImage: (imagePath) => ipcRenderer.invoke('read-image', imagePath),
   openInExplorer: (filePath) => ipcRenderer.invoke('open-in-explorer', filePath),
+  openFileWithDefaultApp: (filePath) => ipcRenderer.invoke('open-file-with-default-app', filePath),
+  openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
   
   // ============================================================
   // EXR LAYERS

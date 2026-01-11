@@ -42,7 +42,7 @@ export interface RenderJob {
   renderEngine: string;
   
   // Status
-  status: 'idle' | 'rendering' | 'paused' | 'complete' | 'error' | 'missing-app';
+  status: 'idle' | 'rendering' | 'paused' | 'complete' | 'error' | 'missing-app' | 'loading';
   progress: number;
   currentFrame: number;
   totalFrames: number;
@@ -243,7 +243,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
 
     addJob(jobData: Partial<RenderJob>) {
       const job: RenderJob = {
-        id: this.generateId(),
+        id: jobData.id || this.generateId(),
         filePath: '',
         fileName: '',
         applicationType: ApplicationType.BLENDER, // Default, should be overridden
@@ -446,7 +446,10 @@ export const useRenderQueueStore = defineStore('renderQueue', {
 
     async autoSave() {
       if (typeof window !== 'undefined' && (window as any).electronAPI) {
-        const queueData = this.jobs.map(job => ({
+        // Filter out jobs that are still loading (incomplete)
+        const queueData = this.jobs
+          .filter(job => job.status !== 'loading')
+          .map(job => ({
           id: job.id,
           filePath: job.filePath,
           fileName: job.fileName,
@@ -466,7 +469,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
             percentage: job.resolution.percentage,
           },
           fps: job.fps,
-          status: job.status === 'rendering' || job.status === 'paused' ? 'idle' : job.status,
+          status: job.status === 'rendering' || job.status === 'paused' || job.status === 'loading' ? 'idle' : job.status,
           progress: job.status === 'complete' ? 100 : 0,
           currentFrame: 0,
           totalFrames: job.totalFrames,
@@ -490,7 +493,9 @@ export const useRenderQueueStore = defineStore('renderQueue', {
         }));
         
         try {
-          await (window as any).electronAPI.autoSaveQueue(queueData);
+          // Convert reactive objects to plain objects for IPC serialization
+          const plainQueueData = JSON.parse(JSON.stringify(queueData));
+          await (window as any).electronAPI.autoSaveQueue(plainQueueData);
         } catch (error) {
           console.error('Failed to auto-save queue:', error);
         }

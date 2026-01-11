@@ -133,16 +133,16 @@
               <div class="installation-list">
                 <div 
                   v-for="install in cinema4dInstallations" 
-                  :key="install.path"
+                  :key="install.commandLinePath || install.path"
                   class="installation-item"
-                  :class="{ 'installation-item--selected': settings.applicationPaths?.cinema4d === install.path }"
-                  @click="selectAppInstallation('cinema4d', install.path)"
+                  :class="{ 'installation-item--selected': settings.applicationPaths?.cinema4d === (install.commandLinePath || install.path) }"
+                  @click="selectAppInstallation('cinema4d', install.commandLinePath || install.path)"
                 >
                   <div class="installation-item__info">
                     <span class="installation-item__version">Cinema 4D {{ install.version }}</span>
-                    <span class="installation-item__path">{{ install.path }}</span>
+                    <span class="installation-item__path">{{ install.commandLinePath || install.path }}</span>
                   </div>
-                  <svg v-if="settings.applicationPaths?.cinema4d === install.path" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
+                  <svg v-if="settings.applicationPaths?.cinema4d === (install.commandLinePath || install.path)" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
                     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
                   </svg>
                 </div>
@@ -217,16 +217,16 @@
               <div class="installation-list">
                 <div 
                   v-for="install in houdiniInstallations" 
-                  :key="install.path"
+                  :key="install.commandLinePath || install.path"
                   class="installation-item"
-                  :class="{ 'installation-item--selected': settings.applicationPaths?.houdini === install.path }"
-                  @click="selectAppInstallation('houdini', install.path)"
+                  :class="{ 'installation-item--selected': settings.applicationPaths?.houdini === (install.commandLinePath || install.path) }"
+                  @click="selectAppInstallation('houdini', install.commandLinePath || install.path)"
                 >
                   <div class="installation-item__info">
                     <span class="installation-item__version">Houdini {{ install.version }}</span>
-                    <span class="installation-item__path">{{ install.path }}</span>
+                    <span class="installation-item__path">{{ install.commandLinePath || install.path }}</span>
                   </div>
-                  <svg v-if="settings.applicationPaths?.houdini === install.path" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
+                  <svg v-if="settings.applicationPaths?.houdini === (install.commandLinePath || install.path)" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
                     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
                   </svg>
                 </div>
@@ -282,22 +282,25 @@
         <div v-if="activeTab === 'aftereffects'" class="tab-content">
           <div class="settings-section">
             <h3>After Effects Installation</h3>
+            <p class="form-hint" style="margin-bottom: 12px;">
+              RenderQ uses aerender for command-line rendering. The GUI application (AfterFX.exe) is not used.
+            </p>
             
             <div class="form-group">
               <label class="form-label">Detected Installations</label>
               <div class="installation-list">
                 <div 
                   v-for="install in aftereffectsInstallations" 
-                  :key="install.path"
+                  :key="install.commandLinePath || install.path"
                   class="installation-item"
-                  :class="{ 'installation-item--selected': settings.applicationPaths?.aftereffects === install.path }"
-                  @click="selectAppInstallation('aftereffects', install.path)"
+                  :class="{ 'installation-item--selected': settings.applicationPaths?.aftereffects === (install.commandLinePath || install.path) }"
+                  @click="selectAppInstallation('aftereffects', install.commandLinePath || install.path)"
                 >
                   <div class="installation-item__info">
                     <span class="installation-item__version">After Effects {{ install.version }}</span>
-                    <span class="installation-item__path">{{ install.path }}</span>
+                    <span class="installation-item__path">{{ install.commandLinePath || install.path }}</span>
                   </div>
-                  <svg v-if="settings.applicationPaths?.aftereffects === install.path" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
+                  <svg v-if="settings.applicationPaths?.aftereffects === (install.commandLinePath || install.path)" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
                     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
                   </svg>
                 </div>
@@ -371,16 +374,16 @@
               <div class="installation-list">
                 <div 
                   v-for="install in nukeInstallations" 
-                  :key="install.path"
+                  :key="install.commandLinePath || install.path"
                   class="installation-item"
-                  :class="{ 'installation-item--selected': settings.applicationPaths?.nuke === install.path }"
-                  @click="selectAppInstallation('nuke', install.path)"
+                  :class="{ 'installation-item--selected': settings.applicationPaths?.nuke === (install.commandLinePath || install.path) }"
+                  @click="selectAppInstallation('nuke', install.commandLinePath || install.path)"
                 >
                   <div class="installation-item__info">
                     <span class="installation-item__version">Nuke {{ install.version }}</span>
-                    <span class="installation-item__path">{{ install.path }}</span>
+                    <span class="installation-item__path">{{ install.commandLinePath || install.path }}</span>
                   </div>
-                  <svg v-if="settings.applicationPaths?.nuke === install.path" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
+                  <svg v-if="settings.applicationPaths?.nuke === (install.commandLinePath || install.path)" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
                     <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
                   </svg>
                 </div>

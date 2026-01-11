@@ -1,6 +1,6 @@
 {
   "name": "renderq",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "A desktop application for managing multi-application render queues - Blender, Cinema 4D, Houdini, After Effects, and Nuke",
   "main": "electron/main.js",
    "author": {
@@ -23,6 +23,7 @@
     "@carbon/icons-vue": "^10.92.0",
     "@pinia/nuxt": "^0.5.1",
     "electron-store": "^8.1.0",
+    "electron-updater": "^6.1.7",
     "node-notifier": "^10.0.1",
     "pinia": "^2.1.7",
     "sharp": "^0.34.5",
