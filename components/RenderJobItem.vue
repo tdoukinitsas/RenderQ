@@ -11,6 +11,7 @@
     <!-- Context Menu -->
     <div 
       v-if="showContextMenu" 
+      ref="contextMenuEl"
       class="context-menu" 
       :style="contextMenuPosition"
       @click.stop
@@ -234,6 +235,8 @@ const expanded = ref(false);
 const isDragging = ref(false);
 const showContextMenu = ref(false);
 const contextMenuPosition = ref({ top: '0px', left: '0px' });
+const contextMenuEl = ref<HTMLElement | null>(null);
+let contextMenuListenersAttached = false;
 
 const statusLabel = computed(() => {
   switch (props.job.status) {
@@ -340,9 +343,53 @@ function openOutputFolder() {
   closeContextMenu();
 }
 
+function onGlobalPointerDown(e: MouseEvent) {
+  const target = e.target as Node | null;
+  if (!target) {
+    closeContextMenu();
+    return;
+  }
+
+  const menu = contextMenuEl.value;
+  if (menu && !menu.contains(target)) {
+    closeContextMenu();
+  }
+}
+
+function onGlobalContextMenu(e: MouseEvent) {
+  const target = e.target as Node | null;
+  const menu = contextMenuEl.value;
+
+  // If the right-click happens outside the menu, close it.
+  if (menu && target && !menu.contains(target)) {
+    closeContextMenu();
+  }
+}
+
+function attachContextMenuListeners() {
+  if (contextMenuListenersAttached) return;
+  // Capture phase so we can close the menu before other handlers run.
+  document.addEventListener('click', onGlobalPointerDown, true);
+  document.addEventListener('contextmenu', onGlobalContextMenu, true);
+  window.addEventListener('resize', closeContextMenu);
+  contextMenuListenersAttached = true;
+}
+
+function detachContextMenuListeners() {
+  if (!contextMenuListenersAttached) return;
+  document.removeEventListener('click', onGlobalPointerDown, true);
+  document.removeEventListener('contextmenu', onGlobalContextMenu, true);
+  window.removeEventListener('resize', closeContextMenu);
+  contextMenuListenersAttached = false;
+}
+
 // Context menu handlers
 function handleContextMenu(e: MouseEvent) {
   e.preventDefault();
+  e.stopPropagation();
+
+  // Reset in case previous listeners/menu state is still around
+  closeContextMenu();
   
   // Get the bounding rect of the job item to position the menu
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -355,15 +402,16 @@ function handleContextMenu(e: MouseEvent) {
   
   showContextMenu.value = true;
   
-  // Close menu when clicking elsewhere
+  // Attach global listeners after this event finishes bubbling.
   setTimeout(() => {
-    document.addEventListener('click', closeContextMenu, { once: true });
-    document.addEventListener('contextmenu', closeContextMenu, { once: true });
+    attachContextMenuListeners();
   }, 0);
 }
 
 function closeContextMenu() {
+  if (!showContextMenu.value) return;
   showContextMenu.value = false;
+  detachContextMenuListeners();
 }
 
 function openProjectFolder() {
@@ -403,8 +451,7 @@ function resetJob() {
 
 // Cleanup on unmount
 onUnmounted(() => {
-  document.removeEventListener('click', closeContextMenu);
-  document.removeEventListener('contextmenu', closeContextMenu);
+  detachContextMenuListeners();
 });
 </script>
 

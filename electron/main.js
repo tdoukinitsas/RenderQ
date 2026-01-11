@@ -695,7 +695,8 @@ async function findHoudiniInstallations() {
  */
 async function findAfterEffectsInstallations() {
   const installations = [];
-  const searchPaths = APP_INSTALL_PATHS[ApplicationType.AFTER_EFFECTS][platform] || [];
+  const searchPaths = Array.from(new Set(APP_INSTALL_PATHS[ApplicationType.AFTER_EFFECTS][platform] || []));
+  const seen = new Set();
   
   console.log('[After Effects Detection] Platform:', platform);
   console.log('[After Effects Detection] Search paths:', searchPaths);
@@ -723,12 +724,18 @@ async function findAfterEffectsInstallations() {
           const afterFxExe = path.join(fullPath, 'Support Files', 'AfterFX.exe');
           
           if (fs.existsSync(aerenderExe) || fs.existsSync(afterFxExe)) {
+            const commandLinePath = fs.existsSync(aerenderExe) ? aerenderExe : afterFxExe;
+            const guiPath = fs.existsSync(afterFxExe) ? afterFxExe : aerenderExe;
+            const key = String(commandLinePath || guiPath).toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+
             const versionMatch = dir.match(/After\s*Effects\s*(?:CC\s*)?(\d{4}|\d+(?:\.\d+)?)/i);
             installations.push({
               type: ApplicationType.AFTER_EFFECTS,
               version: versionMatch ? versionMatch[1] : dir,
-              path: fs.existsSync(afterFxExe) ? afterFxExe : aerenderExe,
-              commandLinePath: fs.existsSync(aerenderExe) ? aerenderExe : afterFxExe,
+              path: guiPath,
+              commandLinePath,
               folder: dir,
             });
           }
@@ -739,12 +746,18 @@ async function findAfterEffectsInstallations() {
             const afterFx = path.join(fullPath, 'Contents/MacOS/AfterFX');
             
             if (fs.existsSync(afterFx) || fs.existsSync(aerender)) {
+              const commandLinePath = fs.existsSync(aerender) ? aerender : afterFx;
+              const guiPath = fs.existsSync(afterFx) ? afterFx : aerender;
+              const key = String(commandLinePath || guiPath).toLowerCase();
+              if (seen.has(key)) continue;
+              seen.add(key);
+
               const versionMatch = dir.match(/After\s*Effects\s*(?:CC\s*)?(\d{4}|\d+(?:\.\d+)?)/i);
               installations.push({
                 type: ApplicationType.AFTER_EFFECTS,
                 version: versionMatch ? versionMatch[1] : dir,
-                path: fs.existsSync(afterFx) ? afterFx : aerender,
-                commandLinePath: fs.existsSync(aerender) ? aerender : afterFx,
+                path: guiPath,
+                commandLinePath,
                 folder: dir,
               });
             }
@@ -1436,6 +1449,15 @@ function startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettin
     isPaused = false;
     
     const frames = parseFrameRanges(frameRanges);
+    if (!frames || frames.length === 0) {
+      mainWindow.webContents.send('render-error', {
+        jobId,
+        frame: 0,
+        error: 'No frames to render (empty frame range)'
+      });
+      resolve({ success: false, error: 'Empty frame range' });
+      return;
+    }
     const frameStart = Math.min(...frames);
     const frameEnd = Math.max(...frames);
     
@@ -1452,16 +1474,33 @@ function startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettin
     if (appSettings?.take) {
       args.push('-take', appSettings.take);
     }
+
+    // Log the exact command being executed
+    try {
+      mainWindow?.webContents?.send('render-output', {
+        jobId,
+        output: `[Cinema 4D] Spawning: ${appPath} ${args.join(' ')}\n`
+      });
+    } catch (e) {
+      // ignore
+    }
     
     currentRenderProcess = spawn(appPath, args, {
       windowsHide: true,
+      cwd: path.dirname(sceneFile),
       stdio: ['pipe', 'pipe', 'pipe']
     });
     
     let currentFrame = frameStart;
+    let lastOutputLine = '';
+    let lastErrorLine = '';
 
     currentRenderProcess.stdout.on('data', (data) => {
       const output = data.toString();
+      if (output.trim()) {
+        const lines = output.trim().split(/\r?\n/);
+        lastOutputLine = lines[lines.length - 1] || lastOutputLine;
+      }
       
       // Parse progress from C4D output
       const frameMatch = output.match(/Rendering frame (\d+)/i);
@@ -1478,6 +1517,7 @@ function startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettin
       // Check for saved frame
       const savedMatch = output.match(/Saved:\s*(.+)/i) || output.match(/Writing:\s*(.+)/i);
       if (savedMatch) {
+        sawAnyOutput = true;
         mainWindow.webContents.send('frame-rendered', {
           jobId,
           frame: currentFrame,
@@ -1491,7 +1531,12 @@ function startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettin
     });
 
     currentRenderProcess.stderr.on('data', (data) => {
-      mainWindow.webContents.send('render-output', { jobId, output: data.toString() });
+      const output = data.toString();
+      if (output.trim()) {
+        const lines = output.trim().split(/\r?\n/);
+        lastErrorLine = lines[lines.length - 1] || lastErrorLine;
+      }
+      mainWindow.webContents.send('render-output', { jobId, output });
     });
 
     currentRenderProcess.on('close', (code) => {
@@ -1500,10 +1545,11 @@ function startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettin
         currentRenderProcess = null;
         resolve({ success: true });
       } else if (!isPaused) {
+        const detail = lastErrorLine || lastOutputLine;
         mainWindow.webContents.send('render-error', {
           jobId,
           frame: currentFrame,
-          error: `Render process exited with code ${code}`
+          error: `Render process exited with code ${code}${detail ? `: ${detail}` : ''}`
         });
         currentRenderProcess = null;
         resolve({ success: false, error: `Exit code: ${code}` });
@@ -1616,15 +1662,35 @@ function startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSe
     isPaused = false;
     
     const frames = parseFrameRanges(frameRanges);
+    if (!frames || frames.length === 0) {
+      mainWindow.webContents.send('render-error', {
+        jobId,
+        frame: 0,
+        error: 'No frames to render (empty frame range)'
+      });
+      resolve({ success: false, error: 'Empty frame range' });
+      return;
+    }
     const frameStart = Math.min(...frames);
     const frameEnd = Math.max(...frames);
     
     // aerender command
-    const args = ['-project', sceneFile, '-s', String(frameStart), '-e', String(frameEnd)];
+    // Note: -s/-e are only reliably honored when rendering a specific comp / rq index.
+    const args = ['-project', sceneFile];
     
     // Add optional settings
     if (appSettings?.composition) {
-      args.push('-comp', appSettings.composition);
+      args.push('-comp', appSettings.composition, '-s', String(frameStart), '-e', String(frameEnd));
+    } else {
+      // If no comp is specified, aerender renders the project's render queue.
+      try {
+        mainWindow?.webContents?.send('render-output', {
+          jobId,
+          output: `[After Effects] No comp specified; rendering project render queue.\n`
+        });
+      } catch (e) {
+        // ignore
+      }
     }
     if (appSettings?.renderSettings) {
       args.push('-RStemplate', appSettings.renderSettings);
@@ -1638,34 +1704,52 @@ function startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSe
     
     // Add verbose output
     args.push('-v', 'ERRORS_AND_PROGRESS');
+
+    // Log the exact command being executed (helps diagnose AfterFX vs aerender)
+    try {
+      mainWindow?.webContents?.send('render-output', {
+        jobId,
+        output: `[After Effects] Spawning: ${appPath} ${args.join(' ')}\n`
+      });
+    } catch (e) {
+      // ignore
+    }
     
     currentRenderProcess = spawn(appPath, args, {
       windowsHide: true,
+      cwd: path.dirname(sceneFile),
       stdio: ['pipe', 'pipe', 'pipe']
     });
     
     let currentFrame = frameStart;
+    let didRenderAnything = false;
+    let lastErrorLine = '';
 
     currentRenderProcess.stdout.on('data', (data) => {
       const output = data.toString();
+      if (output.trim()) {
+        // Any progress/output indicates the render actually started.
+        if (/\bPROGRESS:\b/i.test(output) || /\bWriting:\b/i.test(output) || /\bSaved:\b/i.test(output) || /\bOutput To\b/i.test(output) || /\bFinished\b/i.test(output)) {
+          didRenderAnything = true;
+        }
+      }
       
       // Parse AE progress
       const progressMatch = output.match(/PROGRESS:\s*(\d+):(\d+):(\d+):(\d+)/);
       if (progressMatch) {
-        const frameInfo = output.match(/(\d+)\s*;\s*\d+/);
-        if (frameInfo) {
-          currentFrame = parseInt(frameInfo[1]);
-          mainWindow.webContents.send('render-progress', {
-            jobId,
-            frame: currentFrame,
-            currentFrameIndex: currentFrame - frameStart,
-            totalFrames: frames.length
-          });
-        }
+        const frameInfo = output.match(/\((\d+)\)/);
+        if (frameInfo) currentFrame = parseInt(frameInfo[1]);
+        mainWindow.webContents.send('render-progress', {
+          jobId,
+          frame: currentFrame,
+          currentFrameIndex: Math.max(0, currentFrame - frameStart),
+          totalFrames: frames.length
+        });
       }
       
       const savedMatch = output.match(/Writing:\s*(.+)/i) || output.match(/Finished Composition:\s*(.+)/i);
       if (savedMatch) {
+        didRenderAnything = true;
         mainWindow.webContents.send('frame-rendered', {
           jobId,
           frame: currentFrame,
@@ -1679,11 +1763,28 @@ function startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSe
     });
 
     currentRenderProcess.stderr.on('data', (data) => {
-      mainWindow.webContents.send('render-output', { jobId, output: data.toString() });
+      const output = data.toString();
+      if (output.trim()) {
+        didRenderAnything = true;
+        const lines = output.trim().split(/\r?\n/);
+        lastErrorLine = lines[lines.length - 1] || lastErrorLine;
+      }
+      mainWindow.webContents.send('render-output', { jobId, output });
     });
 
     currentRenderProcess.on('close', (code) => {
       if (code === 0 || code === null) {
+        if (!didRenderAnything && !isPaused) {
+          mainWindow.webContents.send('render-error', {
+            jobId,
+            frame: currentFrame,
+            error: 'After Effects exited successfully but produced no render output. Ensure the project has Render Queue items, or set a composition name in settings.'
+          });
+          currentRenderProcess = null;
+          resolve({ success: false, error: 'No output' });
+          return;
+        }
+
         mainWindow.webContents.send('render-complete', { jobId });
         currentRenderProcess = null;
         resolve({ success: true });
@@ -1691,7 +1792,7 @@ function startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSe
         mainWindow.webContents.send('render-error', {
           jobId,
           frame: currentFrame,
-          error: `Render process exited with code ${code}`
+          error: `Render process exited with code ${code}${lastErrorLine ? `: ${lastErrorLine}` : ''}`
         });
         currentRenderProcess = null;
         resolve({ success: false, error: `Exit code: ${code}` });

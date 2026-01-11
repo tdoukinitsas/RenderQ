@@ -652,13 +652,29 @@ onMounted(async () => {
     if (!settings.applicationPaths?.houdini && houdiniInstalls?.length > 0) {
       settings.setAppPath(ApplicationType.HOUDINI, houdiniInstalls[0].commandLinePath || houdiniInstalls[0].path);
     }
-    if (!settings.applicationPaths?.aftereffects && aeInstalls?.length > 0) {
+    
+    // After Effects: Migrate old AfterFX.exe paths to aerender.exe
+    if (settings.applicationPaths?.aftereffects) {
+      const savedPath = settings.applicationPaths.aftereffects;
+      // If the saved path points to AfterFX.exe (GUI), find and use aerender.exe instead
+      if (savedPath.toLowerCase().includes('afterfx.exe')) {
+        console.log('[After Effects Migration] Detected old AfterFX.exe path, migrating to aerender.exe');
+        // Try to find the corresponding aerender.exe in the same folder
+        const aerenderPath = savedPath.replace(/afterfx\.exe$/i, 'aerender.exe');
+        settings.setAppPath(ApplicationType.AFTER_EFFECTS, aerenderPath);
+        console.log('[After Effects Migration] Updated path to:', aerenderPath);
+      }
+    } else if (aeInstalls?.length > 0) {
       // For After Effects, prefer commandLinePath (aerender.exe) over path (AfterFX.exe)
       settings.setAppPath(ApplicationType.AFTER_EFFECTS, aeInstalls[0].commandLinePath || aeInstalls[0].path);
     }
+    
     if (!settings.applicationPaths?.nuke && nukeInstalls?.length > 0) {
       settings.setAppPath(ApplicationType.NUKE, nukeInstalls[0].commandLinePath || nukeInstalls[0].path);
     }
+
+    // Migrate any old per-job After Effects override paths (AfterFX.exe -> aerender.exe)
+    migrateAfterEffectsJobOverrides();
     
     // Validate jobs now that we have installations
     renderQueue.validateJobApplications();
@@ -1006,10 +1022,26 @@ async function loadQueue() {
     }
     renderQueue.currentQueueFile = result.filePath;
     renderQueue.hasUnsavedChanges = false;
+
+    // Migrate any old per-job After Effects override paths (AfterFX.exe -> aerender.exe)
+    migrateAfterEffectsJobOverrides();
     
     // Re-validate jobs
     renderQueue.validateJobApplications();
     updateWindowTitle();
+  }
+}
+
+function migrateAfterEffectsJobOverrides() {
+  for (const job of renderQueue.jobs) {
+    if (job.applicationType !== ApplicationType.AFTER_EFFECTS) continue;
+    if (!job.appExecutablePath) continue;
+
+    const exePath = job.appExecutablePath;
+    if (!exePath.toLowerCase().includes('afterfx.exe')) continue;
+
+    const aerenderPath = exePath.replace(/afterfx\.exe$/i, 'aerender.exe');
+    renderQueue.updateJob(job.id, { appExecutablePath: aerenderPath });
   }
 }
 
@@ -1041,7 +1073,6 @@ async function loadSceneFiles(filePaths: string[]) {
         filePath,
         fileName,
         applicationType: appType,
-        appExecutablePath: appPath,
         status: 'loading',
         // Placeholder values - will be updated when metadata is fetched
         originalFrameStart: 1,
