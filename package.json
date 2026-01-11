@@ -3,8 +3,11 @@
   "version": "2.0.0",
   "description": "A desktop application for managing multi-application render queues - Blender, Cinema 4D, Houdini, After Effects, and Nuke",
   "main": "electron/main.js",
-  "author": "RenderQ",
-  "license": "MIT",
+   "author": {
+    "name": "Thomas Doukinitsas",
+    "email": "creativityfilms@gmail.com"
+  },
+  "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
