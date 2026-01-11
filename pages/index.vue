@@ -6,7 +6,7 @@
         <div class="logo">
           <img src="/icon.svg" alt="RenderQ" width="24" height="24" class="logo__icon" />
           <h1>RenderQ</h1>
-          <span class="version-badge">v2.0.0</span>
+          <span class="version-badge">v2.1.2</span>
         </div>
       </div>
       
@@ -501,21 +501,23 @@ async function loadPreviewImage(imagePath: string) {
   if (!imagePath) return;
   const api = (window as any).electronAPI;
   
-  // Check if EXR with layer selection
-  if (imagePath.toLowerCase().endsWith('.exr') && renderQueue.selectedExrLayer && renderQueue.selectedExrLayer !== 'Combined') {
+  // Route all EXR previews through readExrLayer so multipart Blender EXRs work on Windows.
+  if (imagePath.toLowerCase().endsWith('.exr')) {
+    const desiredLayer = renderQueue.selectedExrLayer || 'Combined';
     const result = await api.readExrLayer({
       blenderPath: renderQueue.blenderPath,
       exrPath: imagePath,
-      layer: renderQueue.selectedExrLayer
+      layer: desiredLayer
     });
     if (result.success) {
       currentPreviewImage.value = result.data;
+      return;
     }
-  } else {
-    const result = await api.readImage(imagePath);
-    if (result.success) {
-      currentPreviewImage.value = result.data;
-    }
+  }
+
+  const result = await api.readImage(imagePath);
+  if (result.success) {
+    currentPreviewImage.value = result.data;
   }
 }
 
@@ -748,10 +750,24 @@ function setupRenderListeners() {
       
       // Load preview image (only if not in sequence playback mode and viewing this job)
       if (!renderQueue.isSequencePlayback && (!renderQueue.selectedJobId || renderQueue.selectedJobId === data.jobId)) {
-        const result = await api.readImage(data.outputPath);
-        if (result.success) {
-          renderQueue.setPreview(data.outputPath, result.data);
-          currentPreviewImage.value = result.data;
+        // EXR previews must go through readExrLayer for Blender multipart EXRs.
+        if (data.outputPath.toLowerCase().endsWith('.exr')) {
+          const desiredLayer = renderQueue.selectedExrLayer || 'Combined';
+          const result = await api.readExrLayer({
+            blenderPath: renderQueue.blenderPath,
+            exrPath: data.outputPath,
+            layer: desiredLayer
+          });
+          if (result.success) {
+            renderQueue.setPreview(data.outputPath, result.data);
+            currentPreviewImage.value = result.data;
+          }
+        } else {
+          const result = await api.readImage(data.outputPath);
+          if (result.success) {
+            renderQueue.setPreview(data.outputPath, result.data);
+            currentPreviewImage.value = result.data;
+          }
         }
         
         // Get EXR layers if this is an EXR file

@@ -2223,16 +2223,339 @@ ipcMain.handle('watch-output-dir', async (event, outputDir) => {
   }
 });
 
-// Convert EXR to PNG base64 using sharp
-async function convertExrToPngBase64(exrPath) {
-  // Sharp uses libvips which has native OpenEXR support
-  // It automatically handles multi-layer EXR by reading the first/main layer
-  const pngBuffer = await sharp(exrPath)
-    .toColorspace('srgb')  // Convert from linear to sRGB
-    .png()
-    .toBuffer();
-  
-  return `data:image/png;base64,${pngBuffer.toString('base64')}`;
+function readNullTerminatedString(buffer, offset) {
+  let end = offset;
+  while (end < buffer.length && buffer[end] !== 0) end++;
+  const value = buffer.toString('utf8', offset, end);
+  return { value, nextOffset: Math.min(end + 1, buffer.length) };
+}
+
+function parseExrChannelNamesFromBuffer(buffer) {
+  // Minimal OpenEXR header parser.
+  // We only need the "channels" chlist attribute to derive pass/layer names.
+  if (!Buffer.isBuffer(buffer) || buffer.length < 16) return [];
+
+  const channelNames = [];
+  let offset = 8; // magic (4) + version (4)
+
+  const isAttrNameByte = (b) => {
+    // attribute names are ASCII and often include: letters, digits, _, /, :, ., -
+    return (
+      (b >= 48 && b <= 57) ||
+      (b >= 65 && b <= 90) ||
+      (b >= 97 && b <= 122) ||
+      b === 95 || // _
+      b === 47 || // /
+      b === 58 || // :
+      b === 46 || // .
+      b === 45    // -
+    );
+  };
+
+  const looksLikeAttributeName = (start) => {
+    if (start >= buffer.length) return false;
+    if (buffer[start] === 0) return false;
+    const maxLen = Math.min(start + 256, buffer.length);
+    let i = start;
+    while (i < maxLen && buffer[i] !== 0) {
+      if (!isAttrNameByte(buffer[i])) return false;
+      i++;
+    }
+    // require a terminating null within a reasonable distance
+    return i < maxLen && buffer[i] === 0;
+  };
+
+  // Multipart EXRs contain multiple consecutive headers (one per part).
+  // We read channel lists from every header until the data/offset tables begin.
+  while (looksLikeAttributeName(offset)) {
+    while (offset < buffer.length) {
+      const nameRes = readNullTerminatedString(buffer, offset);
+      const attrName = nameRes.value;
+      offset = nameRes.nextOffset;
+
+      if (!attrName) break; // end of this part's header
+      if (offset >= buffer.length) return channelNames;
+
+      const typeRes = readNullTerminatedString(buffer, offset);
+      const attrType = typeRes.value;
+      offset = typeRes.nextOffset;
+      if (offset + 4 > buffer.length) return channelNames;
+
+      const attrSize = buffer.readUInt32LE(offset);
+      offset += 4;
+
+      const valueStart = offset;
+      const valueEnd = Math.min(offset + attrSize, buffer.length);
+      offset = valueEnd;
+
+      if (attrName === 'channels' && attrType === 'chlist') {
+        let p = valueStart;
+        while (p < valueEnd) {
+          const chRes = readNullTerminatedString(buffer, p);
+          const chName = chRes.value;
+          p = chRes.nextOffset;
+          if (!chName) break;
+          channelNames.push(chName);
+
+          if (p + 16 > valueEnd) break;
+          p += 16;
+        }
+      }
+    }
+
+    // If another header starts immediately after, loop again.
+    // Otherwise we've likely reached the offset tables.
+  }
+
+  return channelNames;
+}
+
+function deriveExrLayerNamesFromChannels(channelNames) {
+  // Blender multipart EXRs commonly use names like: "ViewLayer.Combined.R".
+  // We expose the pass name ("Combined") as the selectable "layer" in the UI.
+  const layers = new Set();
+
+  for (const channelName of channelNames) {
+    const parts = String(channelName).split('.');
+    if (parts.length >= 3) {
+      layers.add(parts[1]);
+      continue;
+    }
+    if (parts.length === 2) {
+      layers.add(parts[0]);
+      continue;
+    }
+    if (['R', 'G', 'B', 'A'].includes(parts[0])) {
+      layers.add('Combined');
+    }
+  }
+
+  const list = Array.from(layers);
+  if (list.length === 0) return ['Combined'];
+  list.sort((a, b) => {
+    if (a === 'Combined') return -1;
+    if (b === 'Combined') return 1;
+    return a.localeCompare(b);
+  });
+  return list;
+}
+
+async function getExrLayersFromFile(exrPath) {
+  const buffer = fs.readFileSync(exrPath);
+  const channels = parseExrChannelNamesFromBuffer(buffer);
+  return deriveExrLayerNamesFromChannels(channels);
+}
+
+async function convertExrToPngBase64(exrPath, blenderPath, layer = 'Combined') {
+  // First try sharp (works on some platforms/builds).
+  try {
+    const pngBuffer = await sharp(exrPath)
+      .toColorspace('srgb')
+      .png()
+      .toBuffer();
+
+    return `data:image/png;base64,${pngBuffer.toString('base64')}`;
+  } catch (sharpError) {
+    // Fall back to Blender conversion for Windows + Blender multipart EXRs.
+    console.warn('Sharp EXR decode failed, falling back to Blender:', sharpError?.message || sharpError);
+  }
+
+  if (!blenderPath || !fs.existsSync(blenderPath)) {
+    throw new Error('Unable to decode EXR: sharp does not support EXR on this platform and Blender path is not configured.');
+  }
+  if (!fs.existsSync(exrPath)) {
+    throw new Error('EXR file not found');
+  }
+
+  const tempPyPath = path.join(os.tmpdir(), `renderq_exr_convert_${Date.now()}_${Math.random().toString(16).slice(2)}.py`);
+  const tempPngPath = path.join(os.tmpdir(), `renderq_exr_${Date.now()}_${Math.random().toString(16).slice(2)}.png`);
+
+  const pythonScript = `
+import sys
+import json
+import argparse
+
+def main():
+    argv = sys.argv
+    argv = argv[argv.index('--') + 1:] if '--' in argv else []
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--exr', required=True)
+    parser.add_argument('--out', required=True)
+    parser.add_argument('--layer', default='Combined')
+    args = parser.parse_args(argv)
+
+    exr_path = args.exr
+    out_path = args.out
+    layer = args.layer
+
+    # Try OpenImageIO first (fast + supports multipart EXR if available in Blender build)
+    try:
+        import OpenImageIO as oiio
+        try:
+            from OpenImageIO import ImageBufAlgo as IBA
+        except Exception:
+            IBA = None
+
+        # Find a subimage that contains the requested pass/layer name
+        subimage = 0
+        chosen = None
+        inp = oiio.ImageInput.open(exr_path)
+        if not inp:
+            raise RuntimeError('OpenImageIO failed to open EXR')
+
+        while True:
+            if not inp.seek_subimage(subimage, 0):
+                break
+            spec = inp.spec()
+            channel_names = list(spec.channelnames)
+            if any(('.' + layer + '.') in n for n in channel_names):
+                chosen = subimage
+                break
+            subimage += 1
+        inp.close()
+
+        if chosen is None:
+            chosen = 0
+
+        buf = oiio.ImageBuf(exr_path, subimage=chosen, miplevel=0)
+        spec = buf.spec()
+        cn = list(spec.channelnames)
+
+        def find_channel(suffix):
+            suf = '.' + layer + '.' + suffix
+            for n in cn:
+                if n.endswith(suf):
+                    return n
+            return None
+
+        r = find_channel('R')
+        g = find_channel('G')
+        b = find_channel('B')
+        a = find_channel('A')
+
+        # Fallback to "R/G/B/A" without prefixes if present
+        if r is None and 'R' in cn: r = 'R'
+        if g is None and 'G' in cn: g = 'G'
+        if b is None and 'B' in cn: b = 'B'
+        if a is None and 'A' in cn: a = 'A'
+
+        if r and g and b:
+            indices = [cn.index(r), cn.index(g), cn.index(b)]
+            names = ['R', 'G', 'B']
+            if a:
+                indices.append(cn.index(a))
+                names.append('A')
+        else:
+            # If we can't find RGB, just take the first 3 channels.
+            n = min(3, len(cn))
+            indices = list(range(n))
+            names = cn[:n]
+
+        # Try the different ImageBufAlgo.channels signatures that exist across OIIO versions
+        out = None
+        if IBA is not None:
+            try:
+                out = IBA.channels(buf, indices, names)
+            except Exception:
+                try:
+                    out = oiio.ImageBuf()
+                    IBA.channels(out, buf, indices, names)
+                except Exception:
+                    out = None
+
+        if out is None:
+            # As a last resort, write the whole buffer (may fail if too many channels)
+            out = buf
+
+        if not out.write(out_path):
+            raise RuntimeError('Failed to write PNG via OpenImageIO')
+
+        print('EXR_CONVERT_JSON:' + json.dumps({'out': out_path}))
+        sys.stdout.flush()
+        return 0
+
+    except Exception:
+        # Fall back to bpy image loading/saving (usually works for Combined)
+        pass
+
+    import bpy
+    img = bpy.data.images.load(exr_path, check_existing=False)
+    img.filepath_raw = out_path
+    img.file_format = 'PNG'
+
+    try:
+        img.save()
+    except Exception:
+        img.save_render(out_path)
+
+    print('EXR_CONVERT_JSON:' + json.dumps({'out': out_path}))
+    sys.stdout.flush()
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())
+`;
+
+  fs.writeFileSync(tempPyPath, pythonScript);
+
+  const args = ['-b', '--python-exit-code', '1', '--python', tempPyPath, '--', '--exr', exrPath, '--out', tempPngPath, '--layer', layer || 'Combined'];
+
+  const base64Data = await new Promise((resolve, reject) => {
+    const proc = spawn(blenderPath, args, {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => { stdout += data.toString(); });
+    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    proc.on('close', (code) => {
+      try { fs.unlinkSync(tempPyPath); } catch (e) {}
+
+      const match = stdout.match(/EXR_CONVERT_JSON:(.+)/);
+      if (!match) {
+        return reject(new Error(`Blender EXR conversion failed (exit ${code}). ${stderr.split('\n').slice(-8).join('\n')}`));
+      }
+
+      let outPath;
+      try {
+        outPath = JSON.parse(match[1]).out;
+      } catch (e) {
+        return reject(new Error('Failed to parse Blender EXR conversion output'));
+      }
+
+      try {
+        const pngBuffer = fs.readFileSync(outPath);
+        // Re-encode via sharp just to ensure consistent PNG + sRGB.
+        sharp(pngBuffer)
+          .toColorspace('srgb')
+          .png()
+          .toBuffer()
+          .then((finalPng) => {
+            try { fs.unlinkSync(outPath); } catch (e) {}
+            resolve(`data:image/png;base64,${finalPng.toString('base64')}`);
+          })
+          .catch(() => {
+            try { fs.unlinkSync(outPath); } catch (e) {}
+            resolve(`data:image/png;base64,${pngBuffer.toString('base64')}`);
+          });
+      } catch (e) {
+        try { fs.unlinkSync(outPath); } catch (err) {}
+        reject(new Error('Blender EXR conversion produced no readable PNG'));
+      }
+    });
+
+    proc.on('error', (error) => {
+      try { fs.unlinkSync(tempPyPath); } catch (e) {}
+      reject(error);
+    });
+  });
+
+  return base64Data;
 }
 
 // Read image file as base64
@@ -2241,10 +2564,10 @@ ipcMain.handle('read-image', async (event, imagePath) => {
     if (fs.existsSync(imagePath)) {
       const ext = path.extname(imagePath).toLowerCase();
       
-      // For EXR files, use parse-exr to convert to PNG
+      // For EXR files, try to convert to PNG (may fail on some platforms)
       if (ext === '.exr') {
         try {
-          const base64Data = await convertExrToPngBase64(imagePath);
+          const base64Data = await convertExrToPngBase64(imagePath, null, 'Combined');
           return {
             success: true,
             data: base64Data,
@@ -2276,17 +2599,24 @@ ipcMain.handle('read-image', async (event, imagePath) => {
   }
 });
 
-// Get EXR layer names - parse-exr doesn't support multi-layer, so we return Combined
+// Get EXR layer names by parsing the EXR header channel list.
 ipcMain.handle('get-exr-layers', async (event, { blenderPath, exrPath }) => {
-  // Sharp/libvips doesn't expose EXR layer names directly
-  // Just return the default "Combined" layer - sharp reads the main/composite layer automatically
-  return { success: true, layers: ['Combined'] };
+  try {
+    if (!exrPath || !fs.existsSync(exrPath)) {
+      return { success: false, error: 'File not found' };
+    }
+
+    const layers = await getExrLayersFromFile(exrPath);
+    return { success: true, layers };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
-// Read EXR with specific layer - for now just reads the main data
+// Read EXR with a selected pass/layer; uses Blender fallback for multipart EXR.
 ipcMain.handle('read-exr-layer', async (event, { blenderPath, exrPath, layer }) => {
   try {
-    const base64Data = await convertExrToPngBase64(exrPath);
+    const base64Data = await convertExrToPngBase64(exrPath, blenderPath, layer || 'Combined');
     return {
       success: true,
       data: base64Data,

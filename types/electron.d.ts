@@ -252,8 +252,8 @@ export interface ElectronAPI {
   // ============================================================
   // EXR LAYERS
   // ============================================================
-  getExrLayers(params: { filePath: string }): Promise<{ success: boolean; layers?: string[]; error?: string }>;
-  readExrLayer(params: { filePath: string; layer: string }): Promise<ImageReadResult>;
+  getExrLayers(params: { blenderPath?: string; exrPath: string }): Promise<{ success: boolean; layers?: string[]; error?: string }>;
+  readExrLayer(params: { blenderPath?: string; exrPath: string; layer?: string }): Promise<ImageReadResult>;
   
   // ============================================================
   // VIDEO
