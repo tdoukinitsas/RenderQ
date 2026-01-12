@@ -270,7 +270,16 @@ export interface ElectronAPI {
   onRenderPaused(callback: (data: { jobId: string }) => void): void;
   onRenderOutput(callback: (data: { jobId: string; output: string }) => void): void;
   onFrameRendered(callback: (data: FrameRenderedData) => void): void;
+  onFramePreview(callback: (data: { jobId: string; outputPath: string; data: string }) => void): void;
   onNewFrameAvailable(callback: (data: { path: string; filename: string }) => void): void;
+
+  // Process + log monitoring
+  getSpawnedProcesses?: () => Promise<{ success: boolean; processes?: any[]; error?: string }>;
+  getSpawnedProcessLog?: (processId: string) => Promise<{ success: boolean; log?: string; error?: string }>;
+  discardSpawnedProcess?: (processId: string) => Promise<{ success: boolean; error?: string }>;
+  getAppLog?: () => Promise<{ success: boolean; lines?: string[]; error?: string }>;
+  onProcessUpdate?: (callback: (data: any) => void) => void;
+  onAppLog?: (callback: (data: { line: string }) => void) => void;
   
   // Remove listeners
   removeAllListeners(channel: string): void;

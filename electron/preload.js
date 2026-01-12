@@ -107,7 +107,16 @@ window.electronAPI = {
   onRenderPaused: (callback) => ipcRenderer.on('render-paused', (event, data) => callback(data)),
   onRenderOutput: (callback) => ipcRenderer.on('render-output', (event, data) => callback(data)),
   onFrameRendered: (callback) => ipcRenderer.on('frame-rendered', (event, data) => callback(data)),
+  onFramePreview: (callback) => ipcRenderer.on('frame-preview', (event, data) => callback(data)),
   onNewFrameAvailable: (callback) => ipcRenderer.on('new-frame-available', (event, data) => callback(data)),
+
+  // Process + log monitoring
+  getSpawnedProcesses: () => ipcRenderer.invoke('get-spawned-processes'),
+  getSpawnedProcessLog: (processId) => ipcRenderer.invoke('get-spawned-process-log', processId),
+  discardSpawnedProcess: (processId) => ipcRenderer.invoke('discard-spawned-process', processId),
+  getAppLog: () => ipcRenderer.invoke('get-app-log'),
+  onProcessUpdate: (callback) => ipcRenderer.on('process-update', (event, data) => callback(data)),
+  onAppLog: (callback) => ipcRenderer.on('app-log', (event, data) => callback(data)),
   
   // Menu events
   onMenuSaveQueue: (callback) => ipcRenderer.on('menu-save-queue', (event, saveAs) => callback(saveAs)),

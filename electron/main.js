@@ -58,6 +58,180 @@ let mainWindow;
 let currentRenderProcess = null;
 let isPaused = false;
 
+// ============================================================
+// PROCESS + APP LOG CAPTURE (for System Monitor tabs)
+// ============================================================
+
+const APP_LOG_MAX_LINES = 2000;
+const appLogLines = [];
+
+function appendAppLogLine(line) {
+  if (!line) return;
+  appLogLines.push(line);
+  if (appLogLines.length > APP_LOG_MAX_LINES) {
+    appLogLines.splice(0, appLogLines.length - APP_LOG_MAX_LINES);
+  }
+  mainWindow?.webContents?.send('app-log', { line });
+}
+
+// Wrap console so we can show logs in the UI (without breaking existing logging).
+const _consoleLog = console.log.bind(console);
+const _consoleWarn = console.warn.bind(console);
+const _consoleError = console.error.bind(console);
+console.log = (...args) => {
+  try { appendAppLogLine(`[LOG] ${args.map(String).join(' ')}`); } catch (e) {}
+  _consoleLog(...args);
+};
+console.warn = (...args) => {
+  try { appendAppLogLine(`[WARN] ${args.map(String).join(' ')}`); } catch (e) {}
+  _consoleWarn(...args);
+};
+console.error = (...args) => {
+  try { appendAppLogLine(`[ERROR] ${args.map(String).join(' ')}`); } catch (e) {}
+  _consoleError(...args);
+};
+
+const SPAWNED_PROC_LOG_MAX_CHARS = 200_000;
+const spawnedProcesses = new Map();
+
+function appendProcessLog(procId, chunk, stream) {
+  const entry = spawnedProcesses.get(procId);
+  if (!entry) return;
+  const text = String(chunk || '');
+  if (!text) return;
+  entry.log += text;
+  if (entry.log.length > SPAWNED_PROC_LOG_MAX_CHARS) {
+    entry.log = entry.log.slice(entry.log.length - SPAWNED_PROC_LOG_MAX_CHARS);
+  }
+  entry.lastUpdate = Date.now();
+  mainWindow?.webContents?.send('process-update', {
+    id: entry.id,
+    pid: entry.pid,
+    name: entry.name,
+    commandLine: entry.commandLine,
+    status: entry.status,
+    exitCode: entry.exitCode,
+    signal: entry.signal,
+    lastUpdate: entry.lastUpdate,
+    logTail: entry.log.slice(-4000),
+    stream,
+  });
+}
+
+function spawnTracked(command, args, options, meta) {
+  const id = `p_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const commandLine = [command, ...(args || [])].join(' ');
+  const entry = {
+    id,
+    pid: null,
+    name: meta?.name || 'process',
+    command,
+    args: args || [],
+    commandLine,
+    cwd: options?.cwd || null,
+    startedAt: Date.now(),
+    endedAt: null,
+    status: 'running',
+    exitCode: null,
+    signal: null,
+    log: '',
+    lastUpdate: Date.now(),
+  };
+  spawnedProcesses.set(id, entry);
+
+  const proc = spawn(command, args, options);
+  entry.pid = proc.pid;
+
+  // Emit an initial update so the UI shows the process even if it produces no output.
+  mainWindow?.webContents?.send('process-update', {
+    id: entry.id,
+    pid: entry.pid,
+    name: entry.name,
+    commandLine: entry.commandLine,
+    status: entry.status,
+    exitCode: entry.exitCode,
+    signal: entry.signal,
+    lastUpdate: entry.lastUpdate,
+    logTail: entry.log.slice(-4000),
+  });
+
+  proc.stdout?.on('data', (d) => appendProcessLog(id, d, 'stdout'));
+  proc.stderr?.on('data', (d) => appendProcessLog(id, d, 'stderr'));
+
+  proc.on('close', (code, signal) => {
+    const e = spawnedProcesses.get(id);
+    if (!e) return;
+    e.status = 'exited';
+    e.exitCode = code;
+    e.signal = signal;
+    e.endedAt = Date.now();
+    e.lastUpdate = Date.now();
+    mainWindow?.webContents?.send('process-update', {
+      id: e.id,
+      pid: e.pid,
+      name: e.name,
+      commandLine: e.commandLine,
+      status: e.status,
+      exitCode: e.exitCode,
+      signal: e.signal,
+      lastUpdate: e.lastUpdate,
+      logTail: e.log.slice(-4000),
+    });
+  });
+
+  proc.on('error', (err) => {
+    appendProcessLog(id, `\n[spawn error] ${err?.message || String(err)}\n`, 'stderr');
+  });
+
+  return proc;
+}
+
+function ensureDirSync(dirPath) {
+  if (!dirPath) return;
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function safeRmSync(targetPath) {
+  if (!targetPath) return;
+  try {
+    fs.rmSync(targetPath, { recursive: true, force: true });
+  } catch (e) {
+    // ignore
+  }
+}
+
+function makeTempDirSync(prefix) {
+  const base = os.tmpdir();
+  const safePrefix = String(prefix || 'renderq').replace(/[^a-z0-9_\-]/gi, '_');
+  return fs.mkdtempSync(path.join(base, `${safePrefix}_`));
+}
+
+async function waitForStableFile(filePath, { timeoutMs = 3000, intervalMs = 150, stableIterations = 2 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = -1;
+  let stableCount = 0;
+ 
+  while (Date.now() < deadline) {
+    try {
+      const stat = fs.statSync(filePath);
+      const size = stat.size;
+      if (size > 0 && size === lastSize) {
+        stableCount += 1;
+        if (stableCount >= stableIterations) return;
+      } else {
+        stableCount = 0;
+      }
+      lastSize = size;
+    } catch (e) {
+      // file may not exist yet
+      stableCount = 0;
+      lastSize = -1;
+    }
+ 
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
 // Check if we're in development mode
 // Use ELECTRON_IS_DEV env var or check if we have .output/public
 const isDev = process.env.ELECTRON_IS_DEV === '1' || 
@@ -126,8 +300,11 @@ function createApplicationMenu() {
           label: 'Save',
           accelerator: 'CmdOrCtrl+S',
           click: () => {
-            if (mainWindow) {
+            console.log('[Menu] Save');
+            if (mainWindow && mainWindow.webContents) {
               mainWindow.webContents.send('menu-save-queue', false);
+            } else {
+              console.warn('[Menu] Save ignored: mainWindow not ready');
             }
           }
         },
@@ -135,8 +312,11 @@ function createApplicationMenu() {
           label: 'Save As...',
           accelerator: 'CmdOrCtrl+Shift+S',
           click: () => {
-            if (mainWindow) {
+            console.log('[Menu] Save As');
+            if (mainWindow && mainWindow.webContents) {
               mainWindow.webContents.send('menu-save-queue', true);
+            } else {
+              console.warn('[Menu] Save As ignored: mainWindow not ready');
             }
           }
         },
@@ -144,8 +324,11 @@ function createApplicationMenu() {
           label: 'Load...',
           accelerator: 'CmdOrCtrl+O',
           click: () => {
-            if (mainWindow) {
+            console.log('[Menu] Load');
+            if (mainWindow && mainWindow.webContents) {
               mainWindow.webContents.send('menu-load-queue');
+            } else {
+              console.warn('[Menu] Load ignored: mainWindow not ready');
             }
           }
         },
@@ -274,6 +457,39 @@ function setupAutoUpdater() {
 app.whenReady().then(() => {
   createWindow();
   setupAutoUpdater();
+});
+
+ipcMain.handle('get-app-log', async () => {
+  return { success: true, lines: appLogLines.slice() };
+});
+
+ipcMain.handle('get-spawned-processes', async () => {
+  const list = Array.from(spawnedProcesses.values()).map((p) => ({
+    id: p.id,
+    pid: p.pid,
+    name: p.name,
+    commandLine: p.commandLine,
+    cwd: p.cwd,
+    status: p.status,
+    exitCode: p.exitCode,
+    signal: p.signal,
+    startedAt: p.startedAt,
+    endedAt: p.endedAt,
+    lastUpdate: p.lastUpdate,
+    logTail: p.log.slice(-4000),
+  }));
+  return { success: true, processes: list };
+});
+
+ipcMain.handle('get-spawned-process-log', async (event, processId) => {
+  const p = spawnedProcesses.get(processId);
+  if (!p) return { success: false, error: 'Process not found' };
+  return { success: true, log: p.log };
+});
+
+ipcMain.handle('discard-spawned-process', async (event, processId) => {
+  spawnedProcesses.delete(processId);
+  return { success: true };
 });
 
 app.on('window-all-closed', () => {
@@ -1062,23 +1278,23 @@ sys.exit(0)
 
     // Disable addons to avoid loading errors
     const args = ['-b', blendFile, '--python-exit-code', '1', '--python', tempPyPath];
-    const process = spawn(blenderPath, args, { 
+    const proc = spawnTracked(blenderPath, args, { 
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
-    });
+    }, { name: 'blender-scene-info' });
 
     let stdout = '';
     let stderr = '';
 
-    process.stdout.on('data', (data) => {
+    proc.stdout.on('data', (data) => {
       stdout += data.toString();
     });
 
-    process.stderr.on('data', (data) => {
+    proc.stderr.on('data', (data) => {
       stderr += data.toString();
     });
 
-    process.on('close', (code) => {
+    proc.on('close', (code) => {
       // Wait a bit before deleting temp file
       setTimeout(() => {
         try {
@@ -1109,7 +1325,7 @@ sys.exit(0)
       }
     });
 
-    process.on('error', (error) => {
+    proc.on('error', (error) => {
       try {
         fs.unlinkSync(tempPyPath);
       } catch (e) {}
@@ -1263,10 +1479,10 @@ sys.exit(0)
     fs.writeFileSync(tempPyPath, pythonScript);
 
     const args = ['-b', blendFile, '--python-exit-code', '1', '--python', tempPyPath];
-    const proc = spawn(blenderPath, args, { 
+    const proc = spawnTracked(blenderPath, args, { 
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
-    });
+    }, { name: 'blender-scene-info' });
 
     let stdout = '';
     let stderr = '';
@@ -1338,6 +1554,9 @@ ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRang
 function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings }) {
   return new Promise((resolve, reject) => {
     isPaused = false;
+
+    // Dedicated temp dir for the entire job to reduce cross-process temp interference.
+    const renderTempDir = makeTempDirSync(`renderq_render_${jobId || 'job'}`);
     
     const frames = parseFrameRanges(frameRanges);
     let currentFrameIndex = 0;
@@ -1351,17 +1570,23 @@ function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSetting
       if (currentFrameIndex >= frames.length) {
         mainWindow.webContents.send('render-complete', { jobId });
         currentRenderProcess = null;
+        safeRmSync(renderTempDir);
         resolve({ success: true });
         return;
       }
       
       const frame = frames[currentFrameIndex];
-      const args = ['-b', sceneFile, '-f', String(frame)];
+      const args = ['-b', '--factory-startup', '--disable-autoexec', sceneFile, '-f', String(frame)];
       
-      currentRenderProcess = spawn(appPath, args, {
+      currentRenderProcess = spawnTracked(appPath, args, {
         windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          TEMP: renderTempDir,
+          TMP: renderTempDir,
+        },
+      }, { name: `blender-render:${jobId || 'job'}` });
 
       let lastOutputPath = null;
 
@@ -1413,8 +1638,27 @@ function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSetting
 
       currentRenderProcess.on('close', (code) => {
         if (code === 0 || code === null) {
-          currentFrameIndex++;
-          renderNextFrame();
+          // Generate EXR preview *between frames* to avoid running multiple Blender instances concurrently
+          // (which has been observed to crash Blender on Windows with exit code 11).
+          (async () => {
+            try {
+              if (lastOutputPath && String(lastOutputPath).toLowerCase().endsWith('.exr')) {
+                await waitForStableFile(lastOutputPath, { timeoutMs: 5000, intervalMs: 200, stableIterations: 2 });
+                const previewData = await convertExrToPngBase64(lastOutputPath, appPath, 'Combined');
+                mainWindow?.webContents?.send('frame-preview', {
+                  jobId,
+                  outputPath: lastOutputPath,
+                  data: previewData
+                });
+              }
+            } catch (e) {
+              // Preview failures should not fail the render.
+              console.warn('[EXR Preview] Failed to generate preview:', e?.message || e);
+            } finally {
+              currentFrameIndex++;
+              renderNextFrame();
+            }
+          })();
         } else if (!isPaused) {
           mainWindow.webContents.send('render-error', {
             jobId,
@@ -1422,6 +1666,7 @@ function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSetting
             error: `Render process exited with code ${code}`
           });
           currentRenderProcess = null;
+          safeRmSync(renderTempDir);
           resolve({ success: false, error: `Exit code: ${code}` });
         }
       });
@@ -1433,6 +1678,7 @@ function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSetting
           error: error.message
         });
         currentRenderProcess = null;
+        safeRmSync(renderTempDir);
         reject(error);
       });
     };
@@ -1485,11 +1731,11 @@ function startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettin
       // ignore
     }
     
-    currentRenderProcess = spawn(appPath, args, {
+    currentRenderProcess = spawnTracked(appPath, args, {
       windowsHide: true,
       cwd: path.dirname(sceneFile),
       stdio: ['pipe', 'pipe', 'pipe']
-    });
+    }, { name: 'cinema4d-render' });
     
     let currentFrame = frameStart;
     let lastOutputLine = '';
@@ -1586,10 +1832,10 @@ function startHoudiniRender({ appPath, sceneFile, frameRanges, jobId, appSetting
     
     const args = ['-c', renderCommand, sceneFile];
     
-    currentRenderProcess = spawn(appPath, args, {
+    currentRenderProcess = spawnTracked(appPath, args, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
-    });
+    }, { name: 'houdini-render' });
     
     let currentFrame = frameStart;
 
@@ -1715,11 +1961,11 @@ function startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSe
       // ignore
     }
     
-    currentRenderProcess = spawn(appPath, args, {
+    currentRenderProcess = spawnTracked(appPath, args, {
       windowsHide: true,
       cwd: path.dirname(sceneFile),
       stdio: ['pipe', 'pipe', 'pipe']
-    });
+    }, { name: 'aftereffects-render' });
     
     let currentFrame = frameStart;
     let didRenderAnything = false;
@@ -1842,10 +2088,10 @@ function startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings }
       args.unshift('-c', appSettings.cacheSize);
     }
     
-    currentRenderProcess = spawn(appPath, args, {
+    currentRenderProcess = spawnTracked(appPath, args, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
-    });
+    }, { name: 'nuke-render' });
     
     let currentFrame = frameStart;
 
@@ -1962,13 +2208,20 @@ ipcMain.handle('get-system-info', async () => {
   try {
     const si = require('systeminformation');
     
-    const [cpu, mem, graphics] = await Promise.all([
+    const [cpu, cpuData, mem, memLayout, graphics] = await Promise.all([
       si.currentLoad(),
+      si.cpu(),
       si.mem(),
+      si.memLayout(),
       si.graphics()
     ]);
 
-    const gpuInfo = graphics.controllers[0] || {};
+    // Get the first discrete GPU (not virtual display adapters)
+    let gpuInfo = graphics.controllers.find(c => 
+      c.vendor && c.vendor.toLowerCase().includes('nvidia') || 
+      c.vendor && c.vendor.toLowerCase().includes('amd') ||
+      c.vendor && c.vendor.toLowerCase().includes('intel') && c.vram > 0
+    ) || graphics.controllers[0] || {};
     
     // Try to get GPU usage on Windows using nvidia-smi or similar
     let gpuUsage = 0;
@@ -2003,15 +2256,29 @@ ipcMain.handle('get-system-info', async () => {
       // nvidia-smi not available
     }
 
+    // Get RAM speed and slot information
+    const ramSpeed = memLayout[0]?.clockSpeed || 0;
+    const ramType = memLayout[0]?.type || 'Unknown';
+    const ramSlots = memLayout.filter(m => m.size > 0).length;
+    const totalSlots = memLayout.length;
+
     return {
       cpu: {
         usage: cpu.currentLoad,
-        cores: cpu.cpus ? cpu.cpus.length : os.cpus().length
+        cores: cpu.cpus ? cpu.cpus.length : os.cpus().length,
+        model: cpuData.brand || 'Unknown',
+        speed: cpuData.speed || 0,
+        physicalCores: cpuData.physicalCores || 0,
+        threads: cpuData.cores || 0
       },
       memory: {
         used: mem.used,
         total: mem.total,
-        percentage: (mem.used / mem.total) * 100
+        percentage: (mem.used / mem.total) * 100,
+        speed: ramSpeed,
+        type: ramType,
+        slots: ramSlots,
+        totalSlots: totalSlots
       },
       gpu: {
         name: gpuInfo.model || 'Unknown',
@@ -2367,13 +2634,17 @@ async function convertExrToPngBase64(exrPath, blenderPath, layer = 'Combined') {
     throw new Error('EXR file not found');
   }
 
-  const tempPyPath = path.join(os.tmpdir(), `renderq_exr_convert_${Date.now()}_${Math.random().toString(16).slice(2)}.py`);
-  const tempPngPath = path.join(os.tmpdir(), `renderq_exr_${Date.now()}_${Math.random().toString(16).slice(2)}.png`);
+  // Dedicated temp workspace per conversion so Blender temp files do not collide.
+  const tempWorkDir = makeTempDirSync('renderq_exr_convert');
+  ensureDirSync(tempWorkDir);
+  const tempPyPath = path.join(tempWorkDir, 'convert.py');
+  const tempPngPath = path.join(tempWorkDir, 'out.png');
 
   const pythonScript = `
 import sys
 import json
 import argparse
+import math
 
 def main():
     argv = sys.argv
@@ -2389,105 +2660,145 @@ def main():
     out_path = args.out
     layer = args.layer
 
-    # Try OpenImageIO first (fast + supports multipart EXR if available in Blender build)
+    import OpenImageIO as oiio
+    from OpenImageIO import ImageBufAlgo as IBA
+
+    def clamp01(x):
+      if x < 0.0:
+        return 0.0
+      if x > 1.0:
+        return 1.0
+      return x
+
+    # Simple ACES fitted tone map (Narkowicz), good-looking highlight roll-off for previews.
+    def aces_fitted(x):
+      a = 2.51
+      b = 0.03
+      c = 2.43
+      d = 0.59
+      e = 0.14
+      return (x*(a*x + b)) / (x*(c*x + d) + e)
+
+    def linear_to_srgb(x):
+      x = clamp01(x)
+      if x <= 0.0031308:
+        return 12.92 * x
+      return 1.055 * (x ** (1.0/2.4)) - 0.055
+
+    # Find a subimage that contains the requested pass/layer name (Blender multipart EXR)
+    chosen = 0
+    inp = oiio.ImageInput.open(exr_path)
+    if not inp:
+      raise RuntimeError('OpenImageIO failed to open EXR')
+
+    for subimage in range(0, 512):
+      if not inp.seek_subimage(subimage, 0):
+        break
+      spec = inp.spec()
+      channel_names = list(spec.channelnames)
+      if any(('.' + layer + '.') in n for n in channel_names):
+        chosen = subimage
+        break
+    inp.close()
+
+    buf = oiio.ImageBuf(exr_path, chosen, 0, oiio.ImageSpec())
+    spec = buf.spec()
+    cn = list(spec.channelnames)
+
+    def find_channel(suffix):
+      # Prefer channels with the selected layer in the middle: ViewLayer.<Layer>.<Suffix>
+      suf = '.' + layer + '.' + suffix
+      for n in cn:
+        if n.endswith(suf):
+          return n
+      return None
+
+    r = find_channel('R')
+    g = find_channel('G')
+    b = find_channel('B')
+    a = find_channel('A')
+    x = find_channel('X')
+    y = find_channel('Y')
+    z = find_channel('Z')
+    w = find_channel('W')
+
+    # Fallback to unprefixed channel names if present
+    if r is None and 'R' in cn: r = 'R'
+    if g is None and 'G' in cn: g = 'G'
+    if b is None and 'B' in cn: b = 'B'
+    if a is None and 'A' in cn: a = 'A'
+    if x is None and 'X' in cn: x = 'X'
+    if y is None and 'Y' in cn: y = 'Y'
+    if z is None and 'Z' in cn: z = 'Z'
+    if w is None and 'W' in cn: w = 'W'
+
+    indices = []
+    names = []
+
+    if r and g and b:
+      indices = [cn.index(r), cn.index(g), cn.index(b)]
+      names = ['R', 'G', 'B']
+      if a:
+        indices.append(cn.index(a))
+        names.append('A')
+    elif x and y and z:
+      indices = [cn.index(x), cn.index(y), cn.index(z)]
+      names = ['R', 'G', 'B']
+    elif z:
+      # Depth/ID style single-channel output: replicate into RGB
+      zi = cn.index(z)
+      indices = [zi, zi, zi]
+      names = ['R', 'G', 'B']
+    elif len(cn) >= 3:
+      indices = [0, 1, 2]
+      names = ['R', 'G', 'B']
+    elif len(cn) == 2:
+      indices = [0, 1, 1]
+      names = ['R', 'G', 'B']
+    elif len(cn) == 1:
+      indices = [0, 0, 0]
+      names = ['R', 'G', 'B']
+    else:
+      raise RuntimeError('No channels found in EXR subimage')
+
+    # IMPORTANT: OIIO expects tuples here, not lists.
+    out = IBA.channels(buf, tuple(indices), tuple(names))
+
+    # Downscale for preview speed (keep aspect, max dimension ~ 1024)
     try:
-        import OpenImageIO as oiio
-        try:
-            from OpenImageIO import ImageBufAlgo as IBA
-        except Exception:
-            IBA = None
-
-        # Find a subimage that contains the requested pass/layer name
-        subimage = 0
-        chosen = None
-        inp = oiio.ImageInput.open(exr_path)
-        if not inp:
-            raise RuntimeError('OpenImageIO failed to open EXR')
-
-        while True:
-            if not inp.seek_subimage(subimage, 0):
-                break
-            spec = inp.spec()
-            channel_names = list(spec.channelnames)
-            if any(('.' + layer + '.') in n for n in channel_names):
-                chosen = subimage
-                break
-            subimage += 1
-        inp.close()
-
-        if chosen is None:
-            chosen = 0
-
-        buf = oiio.ImageBuf(exr_path, subimage=chosen, miplevel=0)
-        spec = buf.spec()
-        cn = list(spec.channelnames)
-
-        def find_channel(suffix):
-            suf = '.' + layer + '.' + suffix
-            for n in cn:
-                if n.endswith(suf):
-                    return n
-            return None
-
-        r = find_channel('R')
-        g = find_channel('G')
-        b = find_channel('B')
-        a = find_channel('A')
-
-        # Fallback to "R/G/B/A" without prefixes if present
-        if r is None and 'R' in cn: r = 'R'
-        if g is None and 'G' in cn: g = 'G'
-        if b is None and 'B' in cn: b = 'B'
-        if a is None and 'A' in cn: a = 'A'
-
-        if r and g and b:
-            indices = [cn.index(r), cn.index(g), cn.index(b)]
-            names = ['R', 'G', 'B']
-            if a:
-                indices.append(cn.index(a))
-                names.append('A')
-        else:
-            # If we can't find RGB, just take the first 3 channels.
-            n = min(3, len(cn))
-            indices = list(range(n))
-            names = cn[:n]
-
-        # Try the different ImageBufAlgo.channels signatures that exist across OIIO versions
-        out = None
-        if IBA is not None:
-            try:
-                out = IBA.channels(buf, indices, names)
-            except Exception:
-                try:
-                    out = oiio.ImageBuf()
-                    IBA.channels(out, buf, indices, names)
-                except Exception:
-                    out = None
-
-        if out is None:
-            # As a last resort, write the whole buffer (may fail if too many channels)
-            out = buf
-
-        if not out.write(out_path):
-            raise RuntimeError('Failed to write PNG via OpenImageIO')
-
-        print('EXR_CONVERT_JSON:' + json.dumps({'out': out_path}))
-        sys.stdout.flush()
-        return 0
-
+      spec0 = out.spec()
+      w0 = int(spec0.width)
+      h0 = int(spec0.height)
+      max_dim = max(w0, h0)
+      if max_dim > 1024:
+        scale = 1024.0 / float(max_dim)
+        w1 = max(1, int(round(w0 * scale)))
+        h1 = max(1, int(round(h0 * scale)))
+        out = IBA.resize(out, w1, h1)
     except Exception:
-        # Fall back to bpy image loading/saving (usually works for Combined)
-        pass
+      pass
 
-    import bpy
-    img = bpy.data.images.load(exr_path, check_existing=False)
-    img.filepath_raw = out_path
-    img.file_format = 'PNG'
-
+    # Apply tone mapping for display: scene-linear -> ACES-like -> sRGB
+    # Best-effort: some Blender/OIIO builds may not expose get_pixels/set_pixels.
     try:
-        img.save()
+      spec = out.spec()
+      nch = int(spec.nchannels)
+      pix = out.get_pixels(oiio.FLOAT)
+      for i in range(0, len(pix), nch):
+        r = pix[i + 0] if nch > 0 else 0.0
+        g = pix[i + 1] if nch > 1 else r
+        b = pix[i + 2] if nch > 2 else r
+        r = linear_to_srgb(aces_fitted(r))
+        g = linear_to_srgb(aces_fitted(g))
+        b = linear_to_srgb(aces_fitted(b))
+        pix[i + 0] = r
+        if nch > 1: pix[i + 1] = g
+        if nch > 2: pix[i + 2] = b
+      out.set_pixels(oiio.FLOAT, pix)
     except Exception:
-        img.save_render(out_path)
+      pass
+    if not out.write(out_path):
+      raise RuntimeError('Failed to write PNG via OpenImageIO')
 
     print('EXR_CONVERT_JSON:' + json.dumps({'out': out_path}))
     sys.stdout.flush()
@@ -2499,13 +2810,18 @@ if __name__ == '__main__':
 
   fs.writeFileSync(tempPyPath, pythonScript);
 
-  const args = ['-b', '--python-exit-code', '1', '--python', tempPyPath, '--', '--exr', exrPath, '--out', tempPngPath, '--layer', layer || 'Combined'];
+  const args = ['-b', '--factory-startup', '--disable-autoexec', '--python-exit-code', '1', '--python', tempPyPath, '--', '--exr', exrPath, '--out', tempPngPath, '--layer', layer || 'Combined'];
 
   const base64Data = await new Promise((resolve, reject) => {
-    const proc = spawn(blenderPath, args, {
+    const proc = spawnTracked(blenderPath, args, {
       windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        TEMP: tempWorkDir,
+        TMP: tempWorkDir,
+      },
+    }, { name: 'blender-exr-preview' });
 
     let stdout = '';
     let stderr = '';
@@ -2518,6 +2834,7 @@ if __name__ == '__main__':
 
       const match = stdout.match(/EXR_CONVERT_JSON:(.+)/);
       if (!match) {
+        safeRmSync(tempWorkDir);
         return reject(new Error(`Blender EXR conversion failed (exit ${code}). ${stderr.split('\n').slice(-8).join('\n')}`));
       }
 
@@ -2537,20 +2854,24 @@ if __name__ == '__main__':
           .toBuffer()
           .then((finalPng) => {
             try { fs.unlinkSync(outPath); } catch (e) {}
+            safeRmSync(tempWorkDir);
             resolve(`data:image/png;base64,${finalPng.toString('base64')}`);
           })
           .catch(() => {
             try { fs.unlinkSync(outPath); } catch (e) {}
+            safeRmSync(tempWorkDir);
             resolve(`data:image/png;base64,${pngBuffer.toString('base64')}`);
           });
       } catch (e) {
         try { fs.unlinkSync(outPath); } catch (err) {}
+        safeRmSync(tempWorkDir);
         reject(new Error('Blender EXR conversion produced no readable PNG'));
       }
     });
 
     proc.on('error', (error) => {
       try { fs.unlinkSync(tempPyPath); } catch (e) {}
+      safeRmSync(tempWorkDir);
       reject(error);
     });
   });
@@ -2563,20 +2884,11 @@ ipcMain.handle('read-image', async (event, imagePath) => {
   try {
     if (fs.existsSync(imagePath)) {
       const ext = path.extname(imagePath).toLowerCase();
-      
-      // For EXR files, try to convert to PNG (may fail on some platforms)
+
+      // EXR cannot be displayed by Chromium <img> tags, and sharp EXR decode is not available
+      // in this Windows build. Use read-exr-layer (which returns PNG) or open in system viewer.
       if (ext === '.exr') {
-        try {
-          const base64Data = await convertExrToPngBase64(imagePath, null, 'Combined');
-          return {
-            success: true,
-            data: base64Data,
-            path: imagePath
-          };
-        } catch (exrError) {
-          console.error('EXR parsing failed:', exrError);
-          // Fall through to raw read as fallback
-        }
+        return { success: false, error: 'Unsupported preview format (EXR). Use EXR preview or open in system viewer.' };
       }
       
       // Standard image formats
@@ -2584,7 +2896,7 @@ ipcMain.handle('read-image', async (event, imagePath) => {
       let mimeType = 'image/png';
       
       if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
-      else if (ext === '.exr') mimeType = 'image/x-exr';
+      // NOTE: EXR is handled above.
       else if (ext === '.tiff' || ext === '.tif') mimeType = 'image/tiff';
       
       return {
@@ -2616,6 +2928,11 @@ ipcMain.handle('get-exr-layers', async (event, { blenderPath, exrPath }) => {
 // Read EXR with a selected pass/layer; uses Blender fallback for multipart EXR.
 ipcMain.handle('read-exr-layer', async (event, { blenderPath, exrPath, layer }) => {
   try {
+    // Safety: avoid starting a second Blender process while a render is running.
+    // This prevents Blender crashes on Windows (observed as exit code 11 in the main render process).
+    if (currentRenderProcess) {
+      return { success: false, error: 'EXR preview is temporarily disabled while rendering is in progress.' };
+    }
     const base64Data = await convertExrToPngBase64(exrPath, blenderPath, layer || 'Combined');
     return {
       success: true,

@@ -4,11 +4,19 @@ export interface SystemInfo {
   cpu: {
     usage: number;
     cores: number;
+    model: string;
+    speed: number;
+    physicalCores: number;
+    threads: number;
   };
   memory: {
     used: number;
     total: number;
     percentage: number;
+    speed: number;
+    type: string;
+    slots: number;
+    totalSlots: number;
   };
   gpu: {
     name: string;
@@ -25,6 +33,7 @@ export interface SystemMonitorState {
   info: SystemInfo | null;
   isMonitoring: boolean;
   updateInterval: number;
+  intervalId: number | null;
   history: {
     cpu: number[];
     memory: number[];
@@ -39,6 +48,7 @@ export const useSystemMonitorStore = defineStore('systemMonitor', {
     info: null,
     isMonitoring: false,
     updateInterval: 1000,
+    intervalId: null,
     history: {
       cpu: [],
       memory: [],
@@ -50,7 +60,17 @@ export const useSystemMonitorStore = defineStore('systemMonitor', {
 
   getters: {
     cpuUsage: (state) => state.info?.cpu.usage || 0,
+    cpuModel: (state) => state.info?.cpu.model || 'Unknown',
+    cpuSpeed: (state) => state.info?.cpu.speed || 0,
+    cpuCores: (state) => state.info?.cpu.physicalCores || 0,
+    cpuThreads: (state) => state.info?.cpu.threads || 0,
+    
     memoryUsage: (state) => state.info?.memory.percentage || 0,
+    memorySpeed: (state) => state.info?.memory.speed || 0,
+    memoryType: (state) => state.info?.memory.type || 'Unknown',
+    memorySlots: (state) => state.info?.memory.slots || 0,
+    memoryTotalSlots: (state) => state.info?.memory.totalSlots || 0,
+    
     gpuUsage: (state) => state.info?.gpu.usage || 0,
     gpuVramUsage: (state) => state.info?.gpu.vram.percentage || 0,
     
@@ -76,8 +96,8 @@ export const useSystemMonitorStore = defineStore('systemMonitor', {
         if (info) {
           this.info = info;
           
-          // Add to history (keep last 60 entries = 1 minute at 1s interval)
-          const maxHistory = 60;
+          // Add to history (keep last 1 hour at fastest interval of 250ms = 14400 points max)
+          const maxHistory = 14400;
           
           this.history.cpu.push(info.cpu.usage);
           this.history.memory.push(info.memory.percentage);
@@ -102,17 +122,27 @@ export const useSystemMonitorStore = defineStore('systemMonitor', {
       this.isMonitoring = true;
       this.updateSystemInfo();
       
-      const intervalId = setInterval(() => {
+      this.intervalId = window.setInterval(() => {
         if (this.isMonitoring) {
           this.updateSystemInfo();
-        } else {
-          clearInterval(intervalId);
         }
       }, this.updateInterval);
     },
 
     stopMonitoring() {
       this.isMonitoring = false;
+      if (this.intervalId) {
+        clearInterval(this.intervalId);
+        this.intervalId = null;
+      }
+    },
+
+    setUpdateInterval(ms: number) {
+      this.updateInterval = ms;
+      if (this.isMonitoring) {
+        this.stopMonitoring();
+        this.startMonitoring();
+      }
     },
 
     clearHistory() {
