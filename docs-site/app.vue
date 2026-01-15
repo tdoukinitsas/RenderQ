@@ -240,7 +240,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 
-const version = ref('2.2.0');
+const version = ref('2.2.1');
 
 const downloadLinks = computed(() => {
   const baseUrl = `https://github.com/tdoukinitsas/RenderQ/releases/download/v${version.value}`;

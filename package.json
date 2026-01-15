@@ -1,6 +1,6 @@
 {
   "name": "renderq",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "A desktop application for managing multi-application render queues - Blender, Cinema 4D, Houdini, After Effects, and Nuke",
   "main": "electron/main.js",
   "author": {

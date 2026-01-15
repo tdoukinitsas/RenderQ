@@ -34,6 +34,7 @@ export interface SystemMonitorState {
   isMonitoring: boolean;
   updateInterval: number;
   intervalId: number | null;
+  isUpdating: boolean;
   history: {
     cpu: number[];
     memory: number[];
@@ -49,6 +50,7 @@ export const useSystemMonitorStore = defineStore('systemMonitor', {
     isMonitoring: false,
     updateInterval: 1000,
     intervalId: null,
+    isUpdating: false,
     history: {
       cpu: [],
       memory: [],
@@ -91,27 +93,35 @@ export const useSystemMonitorStore = defineStore('systemMonitor', {
 
   actions: {
     async updateSystemInfo() {
+      // Prevent overlapping calls
+      if (this.isUpdating) return;
+      
       if (typeof window !== 'undefined' && (window as any).electronAPI) {
-        const info = await (window as any).electronAPI.getSystemInfo();
-        if (info) {
-          this.info = info;
-          
-          // Add to history (keep last 1 hour at fastest interval of 250ms = 14400 points max)
-          const maxHistory = 14400;
-          
-          this.history.cpu.push(info.cpu.usage);
-          this.history.memory.push(info.memory.percentage);
-          this.history.gpu.push(info.gpu.usage);
-          this.history.gpuVram.push(info.gpu.vram.percentage);
-          this.history.timestamps.push(Date.now());
-          
-          if (this.history.cpu.length > maxHistory) {
-            this.history.cpu.shift();
-            this.history.memory.shift();
-            this.history.gpu.shift();
-            this.history.gpuVram.shift();
-            this.history.timestamps.shift();
+        this.isUpdating = true;
+        try {
+          const info = await (window as any).electronAPI.getSystemInfo();
+          if (info) {
+            this.info = info;
+            
+            // Add to history (keep last 1 hour at fastest interval of 250ms = 14400 points max)
+            const maxHistory = 14400;
+            
+            this.history.cpu.push(info.cpu.usage);
+            this.history.memory.push(info.memory.percentage);
+            this.history.gpu.push(info.gpu.usage);
+            this.history.gpuVram.push(info.gpu.vram.percentage);
+            this.history.timestamps.push(Date.now());
+            
+            if (this.history.cpu.length > maxHistory) {
+              this.history.cpu.shift();
+              this.history.memory.shift();
+              this.history.gpu.shift();
+              this.history.gpuVram.shift();
+              this.history.timestamps.shift();
+            }
           }
+        } finally {
+          this.isUpdating = false;
         }
       }
     },

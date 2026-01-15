@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('path');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const Store = require('electron-store');
@@ -57,6 +57,16 @@ const tempQueuePath = path.join(os.tmpdir(), 'renderq-temp.json');
 let mainWindow;
 let currentRenderProcess = null;
 let isPaused = false;
+
+// ============================================================
+// SYSTEM MONITOR - Throttling and caching to prevent spawning multiple processes
+// ============================================================
+
+let systemInfoInProgress = false;
+let cachedGpuInfo = null;
+let cachedCpuModel = null;
+let lastNvidiaSmiResult = null;
+let nvidiaSmiPath = null; // Cache the path to nvidia-smi
 
 // ============================================================
 // PROCESS + APP LOG CAPTURE (for System Monitor tabs)
@@ -2205,83 +2215,139 @@ ipcMain.handle('stop-render', async () => {
 
 // Get system info
 ipcMain.handle('get-system-info', async () => {
+  // Prevent overlapping calls - if already in progress, return cached data or null
+  if (systemInfoInProgress) {
+    return lastNvidiaSmiResult || null;
+  }
+  
+  systemInfoInProgress = true;
+  
   try {
     const si = require('systeminformation');
     
-    const [cpu, cpuData, mem, memLayout, graphics] = await Promise.all([
-      si.currentLoad(),
-      si.cpu(),
-      si.mem(),
-      si.memLayout(),
-      si.graphics()
-    ]);
-
-    // Get the first discrete GPU (not virtual display adapters)
-    let gpuInfo = graphics.controllers.find(c => 
-      c.vendor && c.vendor.toLowerCase().includes('nvidia') || 
-      c.vendor && c.vendor.toLowerCase().includes('amd') ||
-      c.vendor && c.vendor.toLowerCase().includes('intel') && c.vram > 0
-    ) || graphics.controllers[0] || {};
+    // Fetch CPU load and memory (these change frequently)
+    // Only fetch static info (cpuData, memLayout, graphics) if not cached
+    const needsStaticInfo = !cachedCpuModel || !cachedGpuInfo;
     
-    // Try to get GPU usage on Windows using nvidia-smi or similar
+    const promises = [
+      si.currentLoad(),
+      si.mem(),
+    ];
+    
+    if (needsStaticInfo) {
+      promises.push(si.cpu(), si.memLayout(), si.graphics());
+    }
+    
+    const results = await Promise.all(promises);
+    const cpu = results[0];
+    const mem = results[1];
+    
+    let cpuData, memLayout, graphics;
+    if (needsStaticInfo) {
+      cpuData = results[2];
+      memLayout = results[3];
+      graphics = results[4];
+      
+      // Cache static CPU info
+      cachedCpuModel = {
+        brand: cpuData.brand || 'Unknown',
+        speed: cpuData.speed || 0,
+        physicalCores: cpuData.physicalCores || 0,
+        cores: cpuData.cores || 0
+      };
+      
+      // Cache static GPU info
+      const gpuInfo = graphics.controllers.find(c => 
+        c.vendor && c.vendor.toLowerCase().includes('nvidia') || 
+        c.vendor && c.vendor.toLowerCase().includes('amd') ||
+        c.vendor && c.vendor.toLowerCase().includes('intel') && c.vram > 0
+      ) || graphics.controllers[0] || {};
+      
+      cachedGpuInfo = {
+        model: gpuInfo.model || 'Unknown',
+        vram: gpuInfo.vram || 0,
+        isNvidia: gpuInfo.vendor && gpuInfo.vendor.toLowerCase().includes('nvidia')
+      };
+      
+      // Cache RAM layout info
+      cachedGpuInfo.ramSpeed = memLayout[0]?.clockSpeed || 0;
+      cachedGpuInfo.ramType = memLayout[0]?.type || 'Unknown';
+      cachedGpuInfo.ramSlots = memLayout.filter(m => m.size > 0).length;
+      cachedGpuInfo.totalSlots = memLayout.length;
+    }
+    
+    // Try to get GPU usage on Windows using nvidia-smi
     let gpuUsage = 0;
     let gpuMemUsed = 0;
-    let gpuMemTotal = gpuInfo.vram || 0;
+    let gpuMemTotal = cachedGpuInfo.vram || 0;
 
-    try {
-      // Try nvidia-smi for NVIDIA GPUs
-      const nvidiaSmi = await new Promise((resolve) => {
-        exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', 
-          (error, stdout) => {
-            if (error) {
-              resolve(null);
-            } else {
-              const parts = stdout.trim().split(',').map(s => parseFloat(s.trim()));
-              resolve({
-                usage: parts[0] || 0,
-                memUsed: parts[1] || 0,
-                memTotal: parts[2] || 0
-              });
-            }
+    // Only try nvidia-smi if we have an NVIDIA GPU
+    if (cachedGpuInfo.isNvidia) {
+      try {
+        // Find nvidia-smi path once and cache it
+        if (nvidiaSmiPath === null) {
+          const defaultPath = 'C:\\Windows\\System32\\nvidia-smi.exe';
+          if (fs.existsSync(defaultPath)) {
+            nvidiaSmiPath = defaultPath;
+          } else {
+            // nvidia-smi not found, set to false to skip future attempts
+            nvidiaSmiPath = false;
           }
-        );
-      });
+        }
+        
+        if (nvidiaSmiPath) {
+          // Use execFile instead of exec to avoid spawning a shell
+          const nvidiaSmiData = await new Promise((resolve) => {
+            execFile(nvidiaSmiPath, 
+              ['--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'],
+              { timeout: 5000, windowsHide: true },
+              (error, stdout) => {
+                if (error) {
+                  resolve(null);
+                } else {
+                  const parts = stdout.trim().split(',').map(s => parseFloat(s.trim()));
+                  resolve({
+                    usage: parts[0] || 0,
+                    memUsed: parts[1] || 0,
+                    memTotal: parts[2] || 0
+                  });
+                }
+              }
+            );
+          });
 
-      if (nvidiaSmi) {
-        gpuUsage = nvidiaSmi.usage;
-        gpuMemUsed = nvidiaSmi.memUsed;
-        gpuMemTotal = nvidiaSmi.memTotal;
+          if (nvidiaSmiData) {
+            gpuUsage = nvidiaSmiData.usage;
+            gpuMemUsed = nvidiaSmiData.memUsed;
+            gpuMemTotal = nvidiaSmiData.memTotal;
+          }
+        }
+      } catch (e) {
+        // nvidia-smi not available
       }
-    } catch (e) {
-      // nvidia-smi not available
     }
 
-    // Get RAM speed and slot information
-    const ramSpeed = memLayout[0]?.clockSpeed || 0;
-    const ramType = memLayout[0]?.type || 'Unknown';
-    const ramSlots = memLayout.filter(m => m.size > 0).length;
-    const totalSlots = memLayout.length;
-
-    return {
+    // Build result
+    const result = {
       cpu: {
         usage: cpu.currentLoad,
         cores: cpu.cpus ? cpu.cpus.length : os.cpus().length,
-        model: cpuData.brand || 'Unknown',
-        speed: cpuData.speed || 0,
-        physicalCores: cpuData.physicalCores || 0,
-        threads: cpuData.cores || 0
+        model: cachedCpuModel.brand,
+        speed: cachedCpuModel.speed,
+        physicalCores: cachedCpuModel.physicalCores,
+        threads: cachedCpuModel.cores
       },
       memory: {
         used: mem.used,
         total: mem.total,
         percentage: (mem.used / mem.total) * 100,
-        speed: ramSpeed,
-        type: ramType,
-        slots: ramSlots,
-        totalSlots: totalSlots
+        speed: cachedGpuInfo.ramSpeed,
+        type: cachedGpuInfo.ramType,
+        slots: cachedGpuInfo.ramSlots,
+        totalSlots: cachedGpuInfo.totalSlots
       },
       gpu: {
-        name: gpuInfo.model || 'Unknown',
+        name: cachedGpuInfo.model,
         usage: gpuUsage,
         vram: {
           used: gpuMemUsed,
@@ -2290,9 +2356,16 @@ ipcMain.handle('get-system-info', async () => {
         }
       }
     };
+    
+    // Cache the result for use when calls overlap
+    lastNvidiaSmiResult = result;
+    
+    return result;
   } catch (error) {
     console.error('Error getting system info:', error);
     return null;
+  } finally {
+    systemInfoInProgress = false;
   }
 });
 
