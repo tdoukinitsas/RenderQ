@@ -1371,10 +1371,18 @@ function setupRenderListeners() {
   api.onRenderProgress((data: any) => {
     if (renderQueue.currentJob && renderQueue.currentJob.id === data.jobId) {
       const progress = (data.currentFrameIndex / data.totalFrames) * 100;
-      renderQueue.updateJob(data.jobId, {
+      const updateData: any = {
         progress,
         currentFrame: data.currentFrameIndex + 1,
-      });
+      };
+      
+      // Include sample progress if available
+      if (data.currentSample !== undefined && data.totalSamples !== undefined) {
+        updateData.currentSample = data.currentSample;
+        updateData.totalSamples = data.totalSamples;
+      }
+      
+      renderQueue.updateJob(data.jobId, updateData);
       renderQueue.updateTotalProgress();
     }
   });
@@ -1399,6 +1407,8 @@ function setupRenderListeners() {
           elapsedTime: elapsed,
           estimatedTimeRemaining: remaining,
           frameTimes: [...job.frameTimes, avgFrameTime],
+          currentSample: 0, // Reset sample count for next frame
+          totalSamples: 0,
         });
         
         // Track rendered frame path
@@ -1980,30 +1990,47 @@ function getAppSettingsForJob(job: RenderJob): any {
   const appType = job.applicationType || ApplicationType.BLENDER;
   const globalSettings = (settings.appSettings as any)?.[appType] || {};
   
+  // Start with job-specific appSettings (contains user overrides like cyclesDevice, engine, resolution, outputPath)
+  const jobSettings = job.appSettings || {};
+  
   // Merge global settings with job-specific settings
   switch (appType) {
+    case ApplicationType.BLENDER:
+      return {
+        ...globalSettings,
+        ...jobSettings, // Include engine, cyclesDevice, resolution, outputPath overrides
+      };
+    case ApplicationType.MAYA:
+      return {
+        ...globalSettings,
+        ...jobSettings, // Include renderer override
+      };
     case ApplicationType.CINEMA4D:
       return {
         ...globalSettings,
+        ...jobSettings,
         take: job.takeName || globalSettings.take,
       };
     case ApplicationType.HOUDINI:
       return {
         ...globalSettings,
+        ...jobSettings,
         renderNode: job.renderNode || globalSettings.renderNode,
       };
     case ApplicationType.AFTER_EFFECTS:
       return {
         ...globalSettings,
+        ...jobSettings,
         composition: job.composition || globalSettings.composition,
       };
     case ApplicationType.NUKE:
       return {
         ...globalSettings,
+        ...jobSettings,
         writeNode: job.writeNode || globalSettings.writeNode,
       };
     default:
-      return globalSettings;
+      return { ...globalSettings, ...jobSettings };
   }
 }
 

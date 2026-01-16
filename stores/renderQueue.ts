@@ -46,6 +46,8 @@ export interface RenderJob {
   progress: number;
   currentFrame: number;
   totalFrames: number;
+  currentSample: number;
+  totalSamples: number;
   elapsedTime: number;
   estimatedTimeRemaining: number;
   lastRenderedFrame: string | null;
@@ -261,6 +263,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
         progress: 0,
         currentFrame: 0,
         totalFrames: 0,
+        currentSample: 0,
+        totalSamples: 0,
         elapsedTime: 0,
         estimatedTimeRemaining: 0,
         lastRenderedFrame: null,
@@ -473,6 +477,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
           progress: job.status === 'complete' ? 100 : 0,
           currentFrame: 0,
           totalFrames: job.totalFrames,
+          currentSample: 0,
+          totalSamples: 0,
           elapsedTime: 0,
           estimatedTimeRemaining: 0,
           lastRenderedFrame: job.status === 'complete' ? job.lastRenderedFrame : null,
@@ -561,7 +567,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
       this.isRendering = false;
       this.isPaused = false;
       if (this.currentJob) {
-        this.updateJob(this.currentJob.id, { status: 'idle', progress: 0, currentFrame: 0 });
+        this.updateJob(this.currentJob.id, { status: 'idle', progress: 0, currentFrame: 0, currentSample: 0, totalSamples: 0 });
       }
       this.currentJobIndex = -1;
     },

@@ -458,6 +458,62 @@
             </label>
           </div>
         </div>
+        
+        <!-- Maya Tab -->
+        <div v-if="activeTab === 'maya'" class="tab-content">
+          <div class="settings-section">
+            <h3>Maya Installation</h3>
+            
+            <div class="form-group">
+              <label class="form-label">Detected Installations</label>
+              <div class="installation-list">
+                <div 
+                  v-for="install in mayaInstallations" 
+                  :key="install.path"
+                  class="installation-item"
+                  :class="{ 'installation-item--selected': settings.applicationPaths?.maya === install.path }"
+                  @click="selectAppInstallation('maya', install.path)"
+                >
+                  <div class="installation-item__info">
+                    <span class="installation-item__version">Maya {{ install.version }}</span>
+                    <span class="installation-item__path">{{ install.path }}</span>
+                  </div>
+                  <svg v-if="settings.applicationPaths?.maya === install.path" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="installation-item__check">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                  </svg>
+                </div>
+                
+                <div v-if="mayaInstallations.length === 0" class="installation-empty">
+                  No Maya installations found
+                </div>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Custom Path</label>
+              <div class="input-with-button">
+                <input 
+                  type="text" 
+                  class="form-input form-input--mono"
+                  v-model="customPaths.maya"
+                  placeholder="Path to Maya Render executable"
+                />
+                <button class="btn btn--secondary" @click="browseAppPath('maya')">
+                  Browse
+                </button>
+              </div>
+              <span class="form-hint">Select the Render.exe file in Maya's bin folder</span>
+              <button 
+                v-if="customPaths.maya && customPaths.maya !== settings.applicationPaths?.maya"
+                class="btn btn--primary btn--sm"
+                style="margin-top: 8px;"
+                @click="applyCustomPath('maya')"
+              >
+                Use Custom Path
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
       
       <div class="modal__footer">
@@ -490,6 +546,7 @@ const tabs = [
   { id: 'houdini', label: 'Houdini', color: '#ff6b35' },
   { id: 'aftereffects', label: 'After Effects', color: '#9d4edd' },
   { id: 'nuke', label: 'Nuke', color: '#fbbf24' },
+  { id: 'maya', label: 'Maya', color: '#00B4B4' },
 ];
 
 const activeTab = ref('general');
@@ -500,6 +557,7 @@ const cinema4dInstallations = ref<any[]>([]);
 const houdiniInstallations = ref<any[]>([]);
 const aftereffectsInstallations = ref<any[]>([]);
 const nukeInstallations = ref<any[]>([]);
+const mayaInstallations = ref<any[]>([]);
 
 // Custom paths
 const customPaths = reactive({
@@ -508,6 +566,7 @@ const customPaths = reactive({
   houdini: '',
   aftereffects: '',
   nuke: '',
+  maya: '',
 });
 
 // App-specific settings
@@ -544,12 +603,13 @@ async function loadInstallations() {
   if (typeof window !== 'undefined' && (window as any).electronAPI) {
     try {
       // Load all installations in parallel
-      const [blender, cinema4d, houdini, aftereffects, nuke] = await Promise.all([
+      const [blender, cinema4d, houdini, aftereffects, nuke, maya] = await Promise.all([
         (window as any).electronAPI.findBlenderInstallations(),
         (window as any).electronAPI.findCinema4DInstallations?.() || [],
         (window as any).electronAPI.findHoudiniInstallations?.() || [],
         (window as any).electronAPI.findAfterEffectsInstallations?.() || [],
         (window as any).electronAPI.findNukeInstallations?.() || [],
+        (window as any).electronAPI.findMayaInstallations?.() || [],
       ]);
       
       blenderInstallations.value = blender || [];
@@ -557,6 +617,7 @@ async function loadInstallations() {
       houdiniInstallations.value = houdini || [];
       aftereffectsInstallations.value = aftereffects || [];
       nukeInstallations.value = nuke || [];
+      mayaInstallations.value = maya || [];
     } catch (error) {
       console.error('Failed to load installations:', error);
     }
@@ -570,6 +631,7 @@ function loadSettings() {
   customPaths.houdini = settings.applicationPaths?.houdini || '';
   customPaths.aftereffects = settings.applicationPaths?.aftereffects || '';
   customPaths.nuke = settings.applicationPaths?.nuke || '';
+  customPaths.maya = settings.applicationPaths?.maya || '';
   
   // Load app-specific settings
   if (settings.appSettings?.cinema4d) {

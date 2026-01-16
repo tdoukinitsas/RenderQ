@@ -592,6 +592,20 @@ const APP_INSTALL_PATHS = {
       '/usr/local/Nuke',
     ],
   },
+  [ApplicationType.MAYA]: {
+    win32: [
+      'C:\\Program Files\\Autodesk',
+      'C:\\Program Files (x86)\\Autodesk',
+    ],
+    darwin: [
+      '/Applications/Autodesk',
+      '/Applications',
+    ],
+    linux: [
+      '/usr/autodesk',
+      '/opt/autodesk',
+    ],
+  },
 };
 
 /**
@@ -1094,6 +1108,94 @@ async function findNukeInstallations() {
 }
 
 /**
+ * Find Maya installations (cross-platform)
+ */
+async function findMayaInstallations() {
+  const installations = [];
+  const searchPaths = APP_INSTALL_PATHS[ApplicationType.MAYA][platform] || [];
+  
+  console.log('[Maya Detection] Platform:', platform);
+  console.log('[Maya Detection] Search paths:', searchPaths);
+  
+  for (const basePath of searchPaths) {
+    try {
+      if (!fs.existsSync(basePath)) {
+        console.log('[Maya Detection] Path does not exist:', basePath);
+        continue;
+      }
+      
+      console.log('[Maya Detection] Scanning:', basePath);
+      const dirs = fs.readdirSync(basePath);
+      const mayaRelated = dirs.filter(d => d.toLowerCase().includes('maya'));
+      console.log('[Maya Detection] Found Maya-related directories:', mayaRelated);
+      
+      for (const dir of dirs) {
+        if (!dir.toLowerCase().includes('maya')) continue;
+        
+        const fullPath = path.join(basePath, dir);
+        if (!fs.statSync(fullPath).isDirectory()) continue;
+        
+        if (platform === 'win32') {
+          // Look for maya.exe in bin folder
+          const mayaExe = path.join(fullPath, 'bin', 'maya.exe');
+          const renderExe = path.join(fullPath, 'bin', 'Render.exe');
+          
+          if (fs.existsSync(mayaExe)) {
+            const versionMatch = dir.match(/Maya\s*(\d{4}(?:\.\d+)?)/i);
+            console.log('[Maya Detection] Found Maya:', mayaExe, 'Version:', versionMatch ? versionMatch[1] : dir);
+            installations.push({
+              type: ApplicationType.MAYA,
+              version: versionMatch ? versionMatch[1] : dir,
+              path: mayaExe,
+              commandLinePath: fs.existsSync(renderExe) ? renderExe : mayaExe,
+              folder: dir,
+            });
+          }
+        } else if (platform === 'darwin') {
+          // Look for Maya.app
+          const mayaApp = path.join(fullPath, 'Maya.app');
+          if (fs.existsSync(mayaApp)) {
+            const mayaBin = path.join(mayaApp, 'Contents', 'MacOS', 'Maya');
+            const renderBin = path.join(mayaApp, 'Contents', 'bin', 'Render');
+            
+            if (fs.existsSync(mayaBin)) {
+              const versionMatch = dir.match(/Maya\s*(\d{4}(?:\.\d+)?)/i);
+              installations.push({
+                type: ApplicationType.MAYA,
+                version: versionMatch ? versionMatch[1] : dir,
+                path: mayaBin,
+                commandLinePath: fs.existsSync(renderBin) ? renderBin : mayaBin,
+                folder: dir,
+              });
+            }
+          }
+        } else if (platform === 'linux') {
+          // Look for maya in bin folder
+          const mayaBin = path.join(fullPath, 'bin', 'maya');
+          const renderBin = path.join(fullPath, 'bin', 'Render');
+          
+          if (fs.existsSync(mayaBin)) {
+            const versionMatch = dir.match(/maya(\d{4}(?:\.\d+)?)/i);
+            installations.push({
+              type: ApplicationType.MAYA,
+              version: versionMatch ? versionMatch[1] : dir,
+              path: mayaBin,
+              commandLinePath: fs.existsSync(renderBin) ? renderBin : mayaBin,
+              folder: dir,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error searching ${basePath} for Maya:`, error);
+    }
+  }
+  
+  installations.sort((a, b) => compareVersions(a.version, b.version));
+  return installations;
+}
+
+/**
  * Find all installations for a specific application type
  */
 async function findAppInstallations(appType) {
@@ -1108,6 +1210,8 @@ async function findAppInstallations(appType) {
       return findAfterEffectsInstallations();
     case ApplicationType.NUKE:
       return findNukeInstallations();
+    case ApplicationType.MAYA:
+      return findMayaInstallations();
     default:
       return [];
   }
@@ -1146,6 +1250,10 @@ ipcMain.handle('find-nuke-installations', async () => {
   return findNukeInstallations();
 });
 
+ipcMain.handle('find-maya-installations', async () => {
+  return findMayaInstallations();
+});
+
 // New unified handler for finding installations
 ipcMain.handle('find-app-installations', async (event, appType) => {
   if (appType) {
@@ -1162,6 +1270,7 @@ ipcMain.handle('browse-app-path', async (event, appType) => {
     [ApplicationType.HOUDINI]: 'Houdini',
     [ApplicationType.AFTER_EFFECTS]: 'After Effects',
     [ApplicationType.NUKE]: 'Nuke',
+    [ApplicationType.MAYA]: 'Maya',
   };
   
   const filters = [];
@@ -1421,6 +1530,21 @@ ipcMain.handle('get-scene-info', async (event, { appPath, sceneFile, appType }) 
     }
   }
   
+  // For Maya, try to parse the scene file
+  if (detectedAppType === ApplicationType.MAYA) {
+    try {
+      const info = await getMayaSceneInfo(sceneFile);
+      return {
+        success: true,
+        applicationType: ApplicationType.MAYA,
+        ...info,
+      };
+    } catch (error) {
+      console.error('Error getting Maya scene info:', error);
+      // Fall through to defaults
+    }
+  }
+  
   // For other applications, return basic info
   // These apps don't have easy command-line scene inspection
   const fileName = path.basename(sceneFile);
@@ -1531,6 +1655,88 @@ sys.exit(0)
   });
 }
 
+/**
+ * Helper: Get Maya scene info from .ma files (Maya ASCII)
+ * For .mb files (Maya Binary), we return defaults as we can't easily parse binary
+ */
+async function getMayaSceneInfo(sceneFile) {
+  const ext = path.extname(sceneFile).toLowerCase();
+  const fileName = path.basename(sceneFile);
+  const outputDir = path.dirname(sceneFile);
+  
+  // Default info
+  const defaultInfo = {
+    frameStart: 1,
+    frameEnd: 250,
+    fps: 24,
+    outputPath: path.join(outputDir, 'images', fileName.replace(/\.[^.]+$/, '')),
+    outputDir: path.join(outputDir, 'images'),
+    outputPattern: fileName.replace(/\.[^.]+$/, '_####'),
+    format: 'exr',
+    isVideoOutput: false,
+  };
+  
+  // For .mb files, return defaults (binary format)
+  if (ext === '.mb') {
+    return { ...defaultInfo, isDefaults: true };
+  }
+  
+  // For .ma files, parse the ASCII content
+  try {
+    const content = await fs.promises.readFile(sceneFile, 'utf8');
+    
+    // Parse render settings from Maya ASCII
+    let frameStart = defaultInfo.frameStart;
+    let frameEnd = defaultInfo.frameEnd;
+    let fps = defaultInfo.fps;
+    let renderer = 'arnold';
+    let resolutionX = 1920;
+    let resolutionY = 1080;
+    
+    // Frame range: setAttr ".fs" 1; setAttr ".ef" 100;
+    const frameStartMatch = content.match(/setAttr\s+"\.fs"\s+(\d+)/);
+    if (frameStartMatch) frameStart = parseInt(frameStartMatch[1]);
+    
+    const frameEndMatch = content.match(/setAttr\s+"\.ef"\s+(\d+)/);
+    if (frameEndMatch) frameEnd = parseInt(frameEndMatch[1]);
+    
+    // FPS: playbackOptions -fps 24
+    const fpsMatch = content.match(/playbackOptions.*?-fps\s+(\d+(?:\.\d+)?)/);
+    if (fpsMatch) fps = parseFloat(fpsMatch[1]);
+    
+    // Renderer: currentRenderer "arnold"
+    const rendererMatch = content.match(/currentRenderer\s+"([^"]+)"/);
+    if (rendererMatch) renderer = rendererMatch[1];
+    
+    // Resolution: setAttr "defaultResolution.width" 1920; setAttr "defaultResolution.height" 1080;
+    const resXMatch = content.match(/setAttr\s+"defaultResolution\.width"\s+(\d+)/);
+    if (resXMatch) resolutionX = parseInt(resXMatch[1]);
+    
+    const resYMatch = content.match(/setAttr\s+"defaultResolution\.height"\s+(\d+)/);
+    if (resYMatch) resolutionY = parseInt(resYMatch[1]);
+    
+    return {
+      frameStart,
+      frameEnd,
+      fps,
+      outputPath: defaultInfo.outputPath,
+      outputDir: defaultInfo.outputDir,
+      outputPattern: defaultInfo.outputPattern,
+      renderEngine: renderer,
+      resolution: {
+        x: resolutionX,
+        y: resolutionY,
+        percentage: 100,
+      },
+      format: 'exr',
+      isVideoOutput: false,
+    };
+  } catch (error) {
+    console.error('Error parsing Maya ASCII file:', error);
+    return { ...defaultInfo, isDefaults: true };
+  }
+}
+
 // ============================================================
 // MULTI-APPLICATION RENDER HANDLERS
 // ============================================================
@@ -1553,6 +1759,8 @@ ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRang
       return startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     case ApplicationType.NUKE:
       return startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
+    case ApplicationType.MAYA:
+      return startMayaRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     default:
       return { success: false, error: 'Unknown application type' };
   }
@@ -1562,6 +1770,7 @@ ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRang
  * Start Blender render
  */
 function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings }) {
+  console.log('[Blender Render] Starting with appSettings:', JSON.stringify(appSettings, null, 2));
   return new Promise((resolve, reject) => {
     isPaused = false;
 
@@ -1586,7 +1795,60 @@ function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSetting
       }
       
       const frame = frames[currentFrameIndex];
-      const args = ['-b', '--factory-startup', '--disable-autoexec', sceneFile, '-f', String(frame)];
+      const args = ['-b', '--factory-startup', '--disable-autoexec', sceneFile];
+      
+      // Add render engine if specified
+      if (appSettings?.engine) {
+        console.log('[Blender Render] Using engine:', appSettings.engine);
+        args.push('-E', appSettings.engine);
+      }
+      
+      // Build Python expression for settings that need to be applied
+      let pythonExprParts = [];
+      
+      // Add cycles device configuration via Python (required because --factory-startup resets preferences)
+      console.log('[Blender Render] cyclesDevice:', appSettings?.cyclesDevice, 'engine:', appSettings?.engine);
+      if (appSettings?.cyclesDevice && appSettings.cyclesDevice !== 'CPU' && (!appSettings?.engine || appSettings.engine === 'CYCLES')) {
+        // Enable the compute device type in preferences and activate all devices
+        const deviceType = appSettings.cyclesDevice.toUpperCase();
+        pythonExprParts.push(
+          `import bpy`,
+          `prefs = bpy.context.preferences.addons['cycles'].preferences`,
+          `prefs.compute_device_type = '${deviceType}'`,
+          `prefs.get_devices()`,
+          `[setattr(d, 'use', True) for d in prefs.devices if d.type == '${deviceType}' or d.type == 'CPU']`,
+          `bpy.context.scene.cycles.device = 'GPU'`
+        );
+      }
+      
+      // Add resolution override
+      if (appSettings?.resolution?.x && appSettings?.resolution?.y) {
+        if (pythonExprParts.length === 0) {
+          pythonExprParts.push(`import bpy`);
+        }
+        pythonExprParts.push(
+          `bpy.context.scene.render.resolution_x = ${appSettings.resolution.x}`,
+          `bpy.context.scene.render.resolution_y = ${appSettings.resolution.y}`,
+          `bpy.context.scene.render.resolution_percentage = ${appSettings.resolution?.percentage || 100}`
+        );
+      }
+      
+      // Add the Python expression if we have any parts
+      if (pythonExprParts.length > 0) {
+        const pythonExpr = pythonExprParts.join('; ');
+        console.log('[Blender Render] Python expression:', pythonExpr);
+        args.push('--python-expr', pythonExpr);
+      }
+      
+      console.log('[Blender Render] Final args:', args);
+      
+      // Add output path override if specified
+      if (appSettings?.outputPath) {
+        args.push('-o', appSettings.outputPath);
+      }
+      
+      // Add frame to render
+      args.push('-f', String(frame));
       
       currentRenderProcess = spawnTracked(appPath, args, {
         windowsHide: true,
@@ -2166,6 +2428,121 @@ function startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings }
   });
 }
 
+/**
+ * Start Maya render
+ */
+function startMayaRender({ appPath, sceneFile, frameRanges, jobId, appSettings }) {
+  return new Promise((resolve, reject) => {
+    isPaused = false;
+    
+    const frames = parseFrameRanges(frameRanges);
+    const frameStart = Math.min(...frames);
+    const frameEnd = Math.max(...frames);
+    
+    // Maya Render command: Render -s startFrame -e endFrame sceneFile
+    const args = ['-s', String(frameStart), '-e', String(frameEnd)];
+    
+    // Add optional settings
+    if (appSettings?.renderer) {
+      args.push('-r', appSettings.renderer);
+    }
+    if (appSettings?.camera) {
+      args.push('-cam', appSettings.camera);
+    }
+    if (appSettings?.renderLayer) {
+      args.push('-rl', appSettings.renderLayer);
+    }
+    if (appSettings?.verbose !== undefined) {
+      args.push('-v', String(appSettings.verbose));
+    }
+    if (appSettings?.threads) {
+      args.push('-n', String(appSettings.threads));
+    }
+    
+    // Add scene file at the end
+    args.push(sceneFile);
+    
+    currentRenderProcess = spawnTracked(appPath, args, {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    }, { name: 'maya-render' });
+    
+    let currentFrame = frameStart;
+
+    currentRenderProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      
+      // Parse Maya progress - "Rendering frame X"
+      const frameMatch = output.match(/(?:Rendering|Frame)\s+(\d+)/i);
+      if (frameMatch) {
+        currentFrame = parseInt(frameMatch[1]);
+        mainWindow.webContents.send('render-progress', {
+          jobId,
+          frame: currentFrame,
+          currentFrameIndex: currentFrame - frameStart,
+          totalFrames: frames.length
+        });
+      }
+      
+      // Parse percentage progress - "X% done"
+      const percentMatch = output.match(/(\d+(?:\.\d+)?)\s*%/);
+      if (percentMatch) {
+        mainWindow.webContents.send('render-progress', {
+          jobId,
+          frame: currentFrame,
+          percentage: parseFloat(percentMatch[1]),
+          currentFrameIndex: currentFrame - frameStart,
+          totalFrames: frames.length
+        });
+      }
+      
+      // Parse output file
+      const savedMatch = output.match(/(?:Result|Writing|Saved).*?:\s*(.+\.\w+)/i);
+      if (savedMatch) {
+        mainWindow.webContents.send('frame-rendered', {
+          jobId,
+          frame: currentFrame,
+          outputPath: savedMatch[1].trim(),
+          currentFrameIndex: currentFrame - frameStart,
+          totalFrames: frames.length
+        });
+      }
+
+      mainWindow.webContents.send('render-output', { jobId, output });
+    });
+
+    currentRenderProcess.stderr.on('data', (data) => {
+      mainWindow.webContents.send('render-output', { jobId, output: data.toString() });
+    });
+
+    currentRenderProcess.on('close', (code) => {
+      if (code === 0 || code === null) {
+        mainWindow.webContents.send('render-complete', { jobId });
+        currentRenderProcess = null;
+        resolve({ success: true });
+      } else if (!isPaused) {
+        mainWindow.webContents.send('render-error', {
+          jobId,
+          frame: currentFrame,
+          error: `Render process exited with code ${code}`
+        });
+        currentRenderProcess = null;
+        resolve({ success: false, error: `Exit code: ${code}` });
+      }
+    });
+
+    currentRenderProcess.on('error', (error) => {
+      mainWindow.webContents.send('render-error', {
+        jobId,
+        frame: currentFrame,
+        error: error.message
+      });
+      currentRenderProcess = null;
+      reject(error);
+    });
+  });
+}
+
 // Legacy: Start rendering (Blender only)
 ipcMain.handle('start-render', async (event, { blenderPath, blendFile, frameRanges, jobId }) => {
   return startBlenderRender({
@@ -2211,6 +2588,87 @@ ipcMain.handle('stop-render', async () => {
     currentRenderProcess = null;
   }
   return { success: true };
+});
+
+// Get GPU capabilities for Blender Cycles
+ipcMain.handle('get-gpu-capabilities', async () => {
+  try {
+    const si = require('systeminformation');
+    const graphics = await si.graphics();
+    
+    const capabilities = {
+      hasGpu: false,
+      devices: [],
+      supportedBackends: ['CPU'], // CPU is always available
+    };
+    
+    for (const controller of graphics.controllers) {
+      const vendor = (controller.vendor || '').toLowerCase();
+      const model = controller.model || 'Unknown GPU';
+      const vram = controller.vram || 0;
+      
+      if (vendor.includes('nvidia')) {
+        capabilities.hasGpu = true;
+        capabilities.devices.push({
+          name: model,
+          vendor: 'NVIDIA',
+          vram,
+          backends: ['CUDA', 'OPTIX'], // Modern NVIDIA cards support both
+        });
+        if (!capabilities.supportedBackends.includes('CUDA')) {
+          capabilities.supportedBackends.push('CUDA');
+        }
+        if (!capabilities.supportedBackends.includes('OPTIX')) {
+          capabilities.supportedBackends.push('OPTIX');
+        }
+      } else if (vendor.includes('amd') || vendor.includes('advanced micro')) {
+        capabilities.hasGpu = true;
+        capabilities.devices.push({
+          name: model,
+          vendor: 'AMD',
+          vram,
+          backends: ['HIP'],
+        });
+        if (!capabilities.supportedBackends.includes('HIP')) {
+          capabilities.supportedBackends.push('HIP');
+        }
+      } else if (vendor.includes('intel')) {
+        // Intel Arc GPUs support oneAPI
+        if (model.toLowerCase().includes('arc') || vram > 512) {
+          capabilities.hasGpu = true;
+          capabilities.devices.push({
+            name: model,
+            vendor: 'Intel',
+            vram,
+            backends: ['ONEAPI'],
+          });
+          if (!capabilities.supportedBackends.includes('ONEAPI')) {
+            capabilities.supportedBackends.push('ONEAPI');
+          }
+        }
+      } else if (vendor.includes('apple')) {
+        capabilities.hasGpu = true;
+        capabilities.devices.push({
+          name: model,
+          vendor: 'Apple',
+          vram,
+          backends: ['METAL'],
+        });
+        if (!capabilities.supportedBackends.includes('METAL')) {
+          capabilities.supportedBackends.push('METAL');
+        }
+      }
+    }
+    
+    return capabilities;
+  } catch (error) {
+    console.error('Error detecting GPU capabilities:', error);
+    return {
+      hasGpu: false,
+      devices: [],
+      supportedBackends: ['CPU'],
+    };
+  }
 });
 
 // Get system info

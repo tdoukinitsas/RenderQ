@@ -149,6 +149,19 @@ export interface SystemInfo {
   };
 }
 
+export interface GpuDevice {
+  name: string;
+  vendor: 'NVIDIA' | 'AMD' | 'Intel' | 'Apple';
+  vram: number;
+  backends: ('CUDA' | 'OPTIX' | 'HIP' | 'ONEAPI' | 'METAL')[];
+}
+
+export interface GpuCapabilities {
+  hasGpu: boolean;
+  devices: GpuDevice[];
+  supportedBackends: ('CPU' | 'CUDA' | 'OPTIX' | 'HIP' | 'ONEAPI' | 'METAL')[];
+}
+
 export interface SaveQueueResult {
   success: boolean;
   filePath?: string;
@@ -186,6 +199,7 @@ export interface ElectronAPI {
   findHoudiniInstallations(): Promise<AppInstallation[]>;
   findAfterEffectsInstallations(): Promise<AppInstallation[]>;
   findNukeInstallations(): Promise<AppInstallation[]>;
+  findMayaInstallations(): Promise<AppInstallation[]>;
   
   // Browse (unified)
   browseAppPath(appType?: ApplicationType): Promise<string | null>;
@@ -222,6 +236,7 @@ export interface ElectronAPI {
   // SYSTEM
   // ============================================================
   getSystemInfo(): Promise<SystemInfo | null>;
+  getGpuCapabilities(): Promise<GpuCapabilities>;
   
   // ============================================================
   // QUEUE PERSISTENCE

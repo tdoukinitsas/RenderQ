@@ -9,6 +9,7 @@ export enum ApplicationType {
   HOUDINI = 'houdini',
   AFTER_EFFECTS = 'aftereffects',
   NUKE = 'nuke',
+  MAYA = 'maya',
 }
 
 /**
@@ -73,6 +74,15 @@ export const APPLICATION_INFO: Record<ApplicationType, ApplicationInfo> = {
     color: '#fbbf24', // Yellow
     colorName: 'yellow',
   },
+  [ApplicationType.MAYA]: {
+    type: ApplicationType.MAYA,
+    name: 'Maya',
+    label: 'Maya',
+    shortName: 'Maya',
+    fileExtensions: ['.ma', '.mb'],
+    color: '#00B4B4', // Teal
+    colorName: 'teal',
+  },
 };
 
 /**
@@ -88,6 +98,8 @@ export const APPLICATION_FILE_EXTENSIONS: Record<string, ApplicationType> = {
   '.aepx': ApplicationType.AFTER_EFFECTS,
   '.nk': ApplicationType.NUKE,
   '.nknc': ApplicationType.NUKE,
+  '.ma': ApplicationType.MAYA,
+  '.mb': ApplicationType.MAYA,
 };
 
 /**
@@ -305,6 +317,35 @@ export const APPLICATION_INSTALL_CONFIGS: Record<ApplicationType, ApplicationIns
     },
     versionPattern: /Nuke\s*([\d.]+(?:v\d+)?)/i,
   },
+
+  [ApplicationType.MAYA]: {
+    type: ApplicationType.MAYA,
+    paths: {
+      win32: [
+        'C:\\Program Files\\Autodesk',
+        'C:\\Program Files (x86)\\Autodesk',
+      ],
+      darwin: [
+        '/Applications/Autodesk',
+        '/Applications',
+      ],
+      linux: [
+        '/usr/autodesk',
+        '/opt/autodesk',
+      ],
+    },
+    executables: {
+      win32: 'bin\\maya.exe',
+      darwin: 'Maya.app/Contents/MacOS/Maya',
+      linux: 'bin/maya',
+    },
+    commandLineExecutable: {
+      win32: 'bin\\Render.exe',
+      darwin: 'Maya.app/Contents/bin/Render',
+      linux: 'bin/Render',
+    },
+    versionPattern: /Maya\s*(\d{4}(?:\.\d+)?)/i,
+  },
 };
 
 /**
@@ -349,8 +390,15 @@ export interface SceneInfo {
 export interface BlenderRenderSettings {
   engine?: 'CYCLES' | 'BLENDER_EEVEE' | 'BLENDER_EEVEE_NEXT' | 'BLENDER_WORKBENCH';
   device?: 'CPU' | 'GPU' | 'HYBRID';
+  cyclesDevice?: 'CPU' | 'CUDA' | 'OPTIX' | 'HIP' | 'ONEAPI' | 'METAL';
   samples?: number;
   threads?: number;
+  outputPath?: string;
+  resolution?: {
+    x: number;
+    y: number;
+    percentage?: number;
+  };
 }
 
 export interface Cinema4DRenderSettings {
@@ -389,6 +437,14 @@ export interface NukeRenderSettings {
   cacheSize?: string;
 }
 
+export interface MayaRenderSettings {
+  renderer?: 'arnold' | 'vray' | 'renderman' | 'redshift' | 'mayaSoftware' | 'mayaHardware' | 'mayaHardware2' | 'mayaVector';
+  camera?: string;
+  renderLayer?: string;
+  verbose?: number;
+  threads?: number;
+}
+
 /**
  * Union type for all application-specific render settings
  */
@@ -397,7 +453,8 @@ export type ApplicationRenderSettings =
   | Cinema4DRenderSettings
   | HoudiniRenderSettings
   | AfterEffectsRenderSettings
-  | NukeRenderSettings;
+  | NukeRenderSettings
+  | MayaRenderSettings;
 
 /**
  * Per-application path configuration
@@ -408,6 +465,7 @@ export interface ApplicationPaths {
   [ApplicationType.HOUDINI]: string;
   [ApplicationType.AFTER_EFFECTS]: string;
   [ApplicationType.NUKE]: string;
+  [ApplicationType.MAYA]: string;
 }
 
 /**
@@ -419,6 +477,7 @@ export const DEFAULT_APPLICATION_PATHS: ApplicationPaths = {
   [ApplicationType.HOUDINI]: '',
   [ApplicationType.AFTER_EFFECTS]: '',
   [ApplicationType.NUKE]: '',
+  [ApplicationType.MAYA]: '',
 };
 
 /**
@@ -442,5 +501,8 @@ export const APPLICATION_OUTPUT_FORMATS: Record<ApplicationType, string[]> = {
   ],
   [ApplicationType.NUKE]: [
     'exr', 'dpx', 'tiff', 'tif', 'png', 'jpg', 'jpeg', 'tga', 'hdr', 'sgi', 'pic'
+  ],
+  [ApplicationType.MAYA]: [
+    'iff', 'exr', 'png', 'jpg', 'jpeg', 'tif', 'tiff', 'tga', 'bmp', 'hdr', 'psd', 'dds'
   ],
 };

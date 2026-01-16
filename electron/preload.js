@@ -16,6 +16,7 @@ window.electronAPI = {
   findHoudiniInstallations: () => ipcRenderer.invoke('find-houdini-installations'),
   findAfterEffectsInstallations: () => ipcRenderer.invoke('find-aftereffects-installations'),
   findNukeInstallations: () => ipcRenderer.invoke('find-nuke-installations'),
+  findMayaInstallations: () => ipcRenderer.invoke('find-maya-installations'),
   
   // Browse (unified)
   browseAppPath: (appType) => ipcRenderer.invoke('browse-app-path', appType),
@@ -47,6 +48,7 @@ window.electronAPI = {
   // SYSTEM
   // ============================================================
   getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
+  getGpuCapabilities: () => ipcRenderer.invoke('get-gpu-capabilities'),
   setWindowTitle: (title) => ipcRenderer.invoke('set-window-title', title),
   setTaskbarProgress: (progress) => ipcRenderer.invoke('set-taskbar-progress', progress),
   

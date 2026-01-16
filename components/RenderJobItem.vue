@@ -118,6 +118,9 @@
             {{ Math.round(job.progress) }}%
             <template v-if="job.status === 'rendering' || job.status === 'paused'">
               • Frame {{ job.currentFrame }} / {{ job.totalFrames }}
+              <template v-if="job.totalSamples > 0">
+                • Sample {{ job.currentSample }} / {{ job.totalSamples }}
+              </template>
             </template>
           </template>
         </span>
@@ -129,22 +132,125 @@
 
     <!-- Expanded details -->
     <div v-if="expanded" class="job-item__details">
-      <div class="job-item__detail-grid">
-        <div class="job-item__detail">
-          <label>Render Engine</label>
-          <span>{{ job.renderEngine }}</span>
+      <!-- Blender-specific settings -->
+      <div v-if="job.applicationType === ApplicationType.BLENDER" class="job-item__section">
+        <h5 class="job-item__section-title">Render Settings</h5>
+        <div class="job-item__detail-grid">
+          <div class="job-item__detail job-item__detail--editable">
+            <label>Render Engine</label>
+            <select 
+              class="form-input form-input--sm"
+              :value="job.appSettings?.engine || job.renderEngine"
+              @change="updateBlenderEngine($event)"
+              :disabled="job.status === 'rendering'"
+            >
+              <option value="">Use file setting ({{ job.renderEngine }})</option>
+              <option value="CYCLES">Cycles</option>
+              <option value="BLENDER_EEVEE">EEVEE</option>
+              <option value="BLENDER_EEVEE_NEXT">EEVEE Next</option>
+              <option value="BLENDER_WORKBENCH">Workbench</option>
+            </select>
+          </div>
+          <div class="job-item__detail job-item__detail--editable">
+            <label>Compute Device</label>
+            <select 
+              class="form-input form-input--sm"
+              :value="job.appSettings?.cyclesDevice || ''"
+              @change="updateCyclesDevice($event)"
+              :disabled="job.status === 'rendering' || (job.appSettings?.engine && job.appSettings.engine !== 'CYCLES')"
+            >
+              <option value="">Use file setting</option>
+              <option v-for="backend in gpuCapabilities.supportedBackends" :key="backend" :value="backend">
+                {{ backend }}
+              </option>
+            </select>
+          </div>
         </div>
+      </div>
+
+      <!-- Maya-specific settings -->
+      <div v-else-if="job.applicationType === ApplicationType.MAYA" class="job-item__section">
+        <h5 class="job-item__section-title">Render Settings</h5>
+        <div class="job-item__detail-grid">
+          <div class="job-item__detail job-item__detail--editable">
+            <label>Renderer</label>
+            <select 
+              class="form-input form-input--sm"
+              :value="job.appSettings?.renderer || ''"
+              @change="updateMayaRenderer($event)"
+              :disabled="job.status === 'rendering'"
+            >
+              <option value="">Use file setting</option>
+              <option value="arnold">Arnold</option>
+              <option value="vray">V-Ray</option>
+              <option value="renderman">RenderMan</option>
+              <option value="redshift">Redshift</option>
+              <option value="mayaSoftware">Maya Software</option>
+              <option value="mayaHardware2">Maya Hardware 2.0</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Common info section -->
+      <div class="job-item__detail-grid">
         <div class="job-item__detail">
           <label>Output Format</label>
           <span>{{ job.format }}</span>
         </div>
         <div class="job-item__detail">
-          <label>Resolution</label>
-          <span>{{ job.resolution.x }}×{{ job.resolution.y }} @ {{ job.resolution.percentage }}%</span>
-        </div>
-        <div class="job-item__detail">
           <label>FPS</label>
           <span>{{ job.fps }}</span>
+        </div>
+      </div>
+
+      <!-- Resolution override -->
+      <div class="job-item__section">
+        <div class="job-item__frame-toggle">
+          <label class="checkbox">
+            <input 
+              type="checkbox" 
+              :checked="useCustomResolution"
+              @change="toggleCustomResolution"
+              :disabled="job.status === 'rendering'"
+            />
+            <span>Custom Resolution</span>
+          </label>
+        </div>
+        
+        <div v-if="!useCustomResolution" class="job-item__detail">
+          <label>Resolution (from file)</label>
+          <span>{{ job.resolution.x }}×{{ job.resolution.y }} @ {{ job.resolution.percentage }}%</span>
+        </div>
+        
+        <div v-else class="job-item__resolution-input">
+          <div class="job-item__resolution-fields">
+            <div class="form-group form-group--inline">
+              <label>Width</label>
+              <input 
+                type="number" 
+                class="form-input form-input--sm"
+                :value="customResolution.x"
+                @input="updateCustomResolutionX($event)"
+                :disabled="job.status === 'rendering'"
+                min="1"
+                max="16384"
+              />
+            </div>
+            <span class="job-item__resolution-x">×</span>
+            <div class="form-group form-group--inline">
+              <label>Height</label>
+              <input 
+                type="number" 
+                class="form-input form-input--sm"
+                :value="customResolution.y"
+                @input="updateCustomResolutionY($event)"
+                :disabled="job.status === 'rendering'"
+                min="1"
+                max="16384"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -180,19 +286,43 @@
         </div>
       </div>
 
-      <div class="job-item__output">
-        <label>Output Path</label>
-        <div class="job-item__output-path">
-          <span class="font-mono">{{ job.outputPath }}</span>
-          <button 
-            class="btn btn--ghost btn--icon btn--sm"
-            @click="openOutputFolder"
-            title="Open in Explorer"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
-            </svg>
-          </button>
+      <!-- Output path override -->
+      <div class="job-item__section">
+        <div class="job-item__frame-toggle">
+          <label class="checkbox">
+            <input 
+              type="checkbox" 
+              :checked="useCustomOutputPath"
+              @change="toggleCustomOutputPath"
+              :disabled="job.status === 'rendering'"
+            />
+            <span>Custom Output Path</span>
+          </label>
+        </div>
+        
+        <div class="job-item__output">
+          <label>Output Path {{ useCustomOutputPath ? '' : '(from file)' }}</label>
+          <div class="job-item__output-path">
+            <input 
+              v-if="useCustomOutputPath"
+              type="text"
+              class="form-input form-input--sm form-input--mono"
+              :value="customOutputPath"
+              @input="updateCustomOutputPath($event)"
+              :disabled="job.status === 'rendering'"
+              placeholder="e.g., C:\renders\output_####"
+            />
+            <span v-else class="font-mono">{{ job.outputPath }}</span>
+            <button 
+              class="btn btn--ghost btn--icon btn--sm"
+              @click="openOutputFolder"
+              title="Open in Explorer"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -208,9 +338,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { RenderJob } from '~/stores/renderQueue';
 import { ApplicationType, APPLICATION_INFO } from '~/types/applications';
+import type { GpuCapabilities } from '~/types/electron';
 
 // Legacy type alias
 type BlendJob = RenderJob;
@@ -237,6 +368,166 @@ const showContextMenu = ref(false);
 const contextMenuPosition = ref({ top: '0px', left: '0px' });
 const contextMenuEl = ref<HTMLElement | null>(null);
 let contextMenuListenersAttached = false;
+
+// GPU capabilities for Blender device selection
+const gpuCapabilities = ref<GpuCapabilities>({
+  hasGpu: false,
+  devices: [],
+  supportedBackends: ['CPU'],
+});
+
+// Fetch GPU capabilities on mount
+onMounted(async () => {
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.getGpuCapabilities) {
+    try {
+      gpuCapabilities.value = await (window as any).electronAPI.getGpuCapabilities();
+    } catch (e) {
+      console.error('Failed to get GPU capabilities:', e);
+    }
+  }
+});
+
+// Computed properties for custom settings
+const useCustomResolution = computed(() => {
+  return !!(props.job.appSettings?.resolution);
+});
+
+const customResolution = computed(() => {
+  return props.job.appSettings?.resolution || {
+    x: props.job.resolution.x,
+    y: props.job.resolution.y,
+    percentage: props.job.resolution.percentage || 100,
+  };
+});
+
+const useCustomOutputPath = computed(() => {
+  return !!(props.job.appSettings?.outputPath);
+});
+
+const customOutputPath = computed(() => {
+  return props.job.appSettings?.outputPath || props.job.outputPath;
+});
+
+// Methods for updating Blender settings
+function updateBlenderEngine(event: Event) {
+  const target = event.target as HTMLSelectElement;
+  const value = target.value;
+  const currentSettings = props.job.appSettings || {};
+  emit('update', {
+    appSettings: {
+      ...currentSettings,
+      engine: value || undefined,
+    },
+  });
+}
+
+function updateCyclesDevice(event: Event) {
+  const target = event.target as HTMLSelectElement;
+  const value = target.value;
+  const currentSettings = props.job.appSettings || {};
+  emit('update', {
+    appSettings: {
+      ...currentSettings,
+      cyclesDevice: value || undefined,
+    },
+  });
+}
+
+function updateMayaRenderer(event: Event) {
+  const target = event.target as HTMLSelectElement;
+  const value = target.value;
+  const currentSettings = props.job.appSettings || {};
+  emit('update', {
+    appSettings: {
+      ...currentSettings,
+      renderer: value || undefined,
+    },
+  });
+}
+
+function toggleCustomResolution() {
+  const currentSettings = props.job.appSettings || {};
+  if (useCustomResolution.value) {
+    // Disable custom resolution
+    const { resolution, ...rest } = currentSettings as any;
+    emit('update', {
+      appSettings: Object.keys(rest).length > 0 ? rest : undefined,
+    });
+  } else {
+    // Enable custom resolution with current file values
+    emit('update', {
+      appSettings: {
+        ...currentSettings,
+        resolution: {
+          x: props.job.resolution.x,
+          y: props.job.resolution.y,
+          percentage: props.job.resolution.percentage || 100,
+        },
+      },
+    });
+  }
+}
+
+function updateCustomResolutionX(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const value = parseInt(target.value) || props.job.resolution.x;
+  const currentSettings = props.job.appSettings || {};
+  emit('update', {
+    appSettings: {
+      ...currentSettings,
+      resolution: {
+        ...customResolution.value,
+        x: value,
+      },
+    },
+  });
+}
+
+function updateCustomResolutionY(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const value = parseInt(target.value) || props.job.resolution.y;
+  const currentSettings = props.job.appSettings || {};
+  emit('update', {
+    appSettings: {
+      ...currentSettings,
+      resolution: {
+        ...customResolution.value,
+        y: value,
+      },
+    },
+  });
+}
+
+function toggleCustomOutputPath() {
+  const currentSettings = props.job.appSettings || {};
+  if (useCustomOutputPath.value) {
+    // Disable custom output path
+    const { outputPath, ...rest } = currentSettings as any;
+    emit('update', {
+      appSettings: Object.keys(rest).length > 0 ? rest : undefined,
+    });
+  } else {
+    // Enable custom output path with current file value
+    emit('update', {
+      appSettings: {
+        ...currentSettings,
+        outputPath: props.job.outputPath,
+      },
+    });
+  }
+}
+
+function updateCustomOutputPath(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const value = target.value;
+  const currentSettings = props.job.appSettings || {};
+  emit('update', {
+    appSettings: {
+      ...currentSettings,
+      outputPath: value,
+    },
+  });
+}
 
 const statusLabel = computed(() => {
   switch (props.job.status) {
@@ -678,9 +969,6 @@ onUnmounted(() => {
   }
   
   &__output {
-    padding-top: $spacing-04;
-    border-top: 1px solid $border-subtle;
-    
     label {
       display: block;
       font-size: $font-size-xs;
@@ -694,13 +982,17 @@ onUnmounted(() => {
     align-items: center;
     gap: $spacing-03;
     
-    span {
+    span, input {
       flex: 1;
       font-size: $font-size-xs;
       color: $text-secondary;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    
+    input {
+      color: $text-primary;
     }
   }
   
@@ -723,6 +1015,64 @@ onUnmounted(() => {
       font-size: $font-size-xs;
       word-break: break-word;
     }
+  }
+  
+  &__section {
+    margin-bottom: $spacing-04;
+    padding-top: $spacing-04;
+    border-top: 1px solid $border-subtle;
+    
+    &:first-child {
+      padding-top: 0;
+      border-top: none;
+    }
+  }
+  
+  &__section-title {
+    font-size: $font-size-xs;
+    font-weight: 600;
+    color: $text-secondary;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: $spacing-03;
+  }
+  
+  &__detail--editable {
+    select, input {
+      width: 100%;
+      margin-top: $spacing-01;
+    }
+  }
+  
+  &__resolution-input {
+    margin-top: $spacing-03;
+  }
+  
+  &__resolution-fields {
+    display: flex;
+    align-items: flex-end;
+    gap: $spacing-03;
+    
+    .form-group--inline {
+      flex: 1;
+      
+      label {
+        display: block;
+        font-size: $font-size-xs;
+        color: $text-tertiary;
+        margin-bottom: $spacing-01;
+      }
+      
+      input {
+        width: 100%;
+      }
+    }
+  }
+  
+  &__resolution-x {
+    color: $text-tertiary;
+    padding-bottom: $spacing-02;
+    font-size: $font-size-sm;
   }
 }
 

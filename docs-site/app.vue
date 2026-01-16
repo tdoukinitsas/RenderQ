@@ -23,6 +23,7 @@
           <span class="app-badge app-badge--houdini">Houdini</span>
           <span class="app-badge app-badge--aftereffects">After Effects</span>
           <span class="app-badge app-badge--nuke">Nuke</span>
+          <span class="app-badge app-badge--maya">Maya</span>
         </p>
       </div>
     </header>
@@ -52,7 +53,9 @@
             target="_blank"
             rel="noopener noreferrer"
           >
-            <div class="platform-icon">🪟</div>
+            <div class="platform-icon">
+              <span class="material-symbols-outlined">desktop_windows</span>
+            </div>
             <h3>Windows</h3>
             <p>Windows 10/11 (64-bit)</p>
             <div class="download-button">
@@ -67,7 +70,9 @@
             target="_blank"
             rel="noopener noreferrer"
           >
-            <div class="platform-icon">🍎</div>
+            <div class="platform-icon">
+              <span class="material-symbols-outlined">laptop_mac</span>
+            </div>
             <h3>macOS</h3>
             <p>macOS 11+ (Intel & Apple Silicon)</p>
             <div class="download-button">
@@ -82,7 +87,9 @@
             target="_blank"
             rel="noopener noreferrer"
           >
-            <div class="platform-icon">🐧</div>
+            <div class="platform-icon">
+              <span class="material-symbols-outlined">terminal</span>
+            </div>
             <h3>Linux</h3>
             <p>Universal Linux (AppImage)</p>
             <div class="download-button">
@@ -125,49 +132,81 @@
         
         <div class="features-grid">
           <div class="feature-card">
-            <div class="feature-icon">🎬</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">movie</span>
+            </div>
             <h3>Multi-Application Support</h3>
-            <p>Manage render queues for Blender, Cinema 4D, Houdini, After Effects, and Nuke all in one place.</p>
+            <p>Manage render queues for Blender, Cinema 4D, Houdini, After Effects, Nuke, and Maya all in one place.</p>
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">📊</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">trending_up</span>
+            </div>
             <h3>Real-time Progress</h3>
             <p>Monitor render progress with live preview, frame-by-frame updates, and ETA calculations.</p>
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">💻</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">memory</span>
+            </div>
             <h3>System Monitor</h3>
             <p>Keep an eye on CPU, RAM, GPU, and VRAM usage while your renders are processing.</p>
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">🖼️</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">image</span>
+            </div>
             <h3>Live Preview</h3>
             <p>View rendered frames as they complete, with support for EXR layers and sequence playback.</p>
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">📁</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">upload_file</span>
+            </div>
             <h3>Drag & Drop</h3>
             <p>Simply drag and drop scene files to add them to the queue. Supports all major formats.</p>
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">💾</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">save</span>
+            </div>
             <h3>Queue Persistence</h3>
             <p>Save and load render queues. Auto-save ensures you never lose your work.</p>
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">⏸️</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">tune</span>
+            </div>
+            <h3>Advanced Render Settings</h3>
+            <p>Override render engine, GPU device, resolution, and output path per job for fine-grained control.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">speed</span>
+            </div>
+            <h3>GPU Acceleration</h3>
+            <p>Auto-detect NVIDIA, AMD, Intel, and Apple GPUs with support for CUDA, OptiX, HIP, oneAPI, and Metal.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">pause_circle</span>
+            </div>
             <h3>Pause & Resume</h3>
             <p>Pause rendering at any time and resume right where you left off.</p>
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">🔔</div>
+            <div class="feature-icon">
+              <span class="material-symbols-outlined">notifications</span>
+            </div>
             <h3>Notifications</h3>
             <p>Get notified when renders complete or if errors occur.</p>
           </div>
@@ -183,7 +222,7 @@
           <div class="app-card app-card--blender">
             <h3>Blender</h3>
             <p class="extensions">.blend</p>
-            <p>Full support for Cycles and Eevee render engines with GPU acceleration.</p>
+            <p>Full support for Cycles, EEVEE, and Workbench engines with CUDA, OptiX, HIP, oneAPI, and Metal GPU acceleration. Override engine and device per job.</p>
           </div>
 
           <div class="app-card app-card--cinema4d">
@@ -208,6 +247,12 @@
             <h3>Nuke</h3>
             <p class="extensions">.nk, .nknc</p>
             <p>Render Write nodes with full frame range control.</p>
+          </div>
+
+          <div class="app-card app-card--maya">
+            <h3>Maya</h3>
+            <p class="extensions">.ma, .mb</p>
+            <p>Batch rendering with support for Arnold, V-Ray, RenderMan, Redshift, and Maya's built-in renderers. Auto-extract scene metadata from ASCII files.</p>
           </div>
         </div>
       </div>
@@ -240,7 +285,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 
-const version = ref('2.2.1');
+const version = ref('2.3.0');
 
 const downloadLinks = computed(() => {
   const baseUrl = `https://github.com/tdoukinitsas/RenderQ/releases/download/v${version.value}`;
@@ -311,6 +356,7 @@ $app-cinema4d: #3b82f6;
 $app-houdini: #ff6b35;
 $app-aftereffects: #9d4edd;
 $app-nuke: #fbbf24;
+$app-maya: #00B4B4;
 
 .docs-site {
   min-height: 100vh;
@@ -394,6 +440,7 @@ $app-nuke: #fbbf24;
   &--houdini { background-color: $app-houdini; }
   &--aftereffects { background-color: $app-aftereffects; }
   &--nuke { background-color: $app-nuke; }
+  &--maya { background-color: $app-maya; }
 }
 
 .screenshot-section {
@@ -465,8 +512,12 @@ $app-nuke: #fbbf24;
     }
 
     .platform-icon {
-      font-size: 3rem;
       margin-bottom: 1rem;
+      
+      .material-symbols-outlined {
+        font-size: 3rem;
+        color: $accent-primary;
+      }
     }
 
     h3 {
@@ -562,8 +613,10 @@ $app-nuke: #fbbf24;
   .features-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 2rem;
-  }
+    gap: 2rem;    
+    @media (min-width: 1024px) {
+      grid-template-columns: repeat(3, 1fr);
+    }  }
 
   .feature-card {
     background: rgba(255, 255, 255, 0.03);
@@ -579,8 +632,12 @@ $app-nuke: #fbbf24;
     }
 
     .feature-icon {
-      font-size: 2.5rem;
       margin-bottom: 1rem;
+      
+      .material-symbols-outlined {
+        font-size: 2.5rem;
+        color: $accent-primary;
+      }
     }
 
     h3 {
@@ -632,6 +689,7 @@ $app-nuke: #fbbf24;
     &--houdini { border-color: $app-houdini; }
     &--aftereffects { border-color: $app-aftereffects; }
     &--nuke { border-color: $app-nuke; }
+    &--maya { border-color: $app-maya; }
 
     h3 {
       font-size: 1.25rem;
