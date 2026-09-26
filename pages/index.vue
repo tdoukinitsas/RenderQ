@@ -1370,18 +1370,43 @@ function setupRenderListeners() {
   
   api.onRenderProgress((data: any) => {
     if (renderQueue.currentJob && renderQueue.currentJob.id === data.jobId) {
-      const progress = (data.currentFrameIndex / data.totalFrames) * 100;
-      const updateData: any = {
-        progress,
-        currentFrame: data.currentFrameIndex + 1,
-      };
-      
+      const updateData: any = {};
+      if (data.phase === 'probe') {
+        // Blender is checking which frames exist; keep the progress shown so far (resumed jobs)
+        renderQueue.updateJob(data.jobId, { renderPhase: 'probe' });
+        return;
+      }
+      if (data.doneCount !== undefined) {
+        // Blender jobs: counts of finished frames (x view layers), including frames skipped because they existed
+        updateData.progress = data.totalFrames > 0 ? (data.doneCount / data.totalFrames) * 100 : 0;
+        updateData.currentFrame = data.doneCount;
+        updateData.totalFrames = data.totalFrames;
+        if (data.phase !== undefined) updateData.renderPhase = data.phase;
+        if (data.layer !== undefined) updateData.currentLayer = data.layer;
+        if (data.frame !== undefined) updateData.currentFrameNumber = data.frame;
+        if (data.frameDone) { updateData.currentSample = 0; updateData.totalSamples = 0; }
+        if (data.renderedCount > 0 && data.elapsedMs !== undefined) {
+          const avg = data.elapsedMs / data.renderedCount;   // only frames rendered in this session
+          updateData.elapsedTime = data.elapsedMs;
+          updateData.estimatedTimeRemaining = (data.totalFrames - data.doneCount) * avg;
+          if (data.frameDone) {
+            // queue ETA counts frames, a split job counts frames x view layers
+            const job = renderQueue.currentJob;
+            const frames = parseFrameRanges(job.useCustomFrameRange ? job.frameRanges : `${job.originalFrameStart}-${job.originalFrameEnd}`).length;
+            updateData.frameTimes = [avg * (frames > 0 ? data.totalFrames / frames : 1)];
+          }
+        }
+      } else {
+        updateData.progress = (data.currentFrameIndex / data.totalFrames) * 100;
+        updateData.currentFrame = data.currentFrameIndex + 1;
+      }
+
       // Include sample progress if available
       if (data.currentSample !== undefined && data.totalSamples !== undefined) {
         updateData.currentSample = data.currentSample;
         updateData.totalSamples = data.totalSamples;
       }
-      
+
       renderQueue.updateJob(data.jobId, updateData);
       renderQueue.updateTotalProgress();
     }
@@ -1391,7 +1416,11 @@ function setupRenderListeners() {
     if (renderQueue.currentJob && renderQueue.currentJob.id === data.jobId) {
       // Update frame timing and progress
       const job = renderQueue.currentJob;
-      if (job.renderStartTime) {
+      if (data.doneCount !== undefined) {
+        // Blender jobs: progress/ETA come with render-progress; only record the frame here
+        renderQueue.updateJob(data.jobId, { lastRenderedFrame: data.outputPath });
+        renderQueue.addRenderedFrame(data.jobId, data.outputPath);
+      } else if (job.renderStartTime) {
         const elapsed = Date.now() - job.renderStartTime;
         const framesComplete = data.currentFrameIndex + 1;
         const avgFrameTime = elapsed / framesComplete;
@@ -1830,6 +1859,8 @@ async function loadSceneFiles(filePaths: string[]) {
         resolution: info.resolution || { x: 1920, y: 1080, percentage: 100 },
         fps: info.fps,
         isVideoOutput: info.isVideoOutput || false,
+        viewLayers: info.viewLayers,
+        pythonDriverCount: info.pythonDriverCount,
       });
     } catch (error) {
       console.error('Error loading scene file:', error);
@@ -1927,9 +1958,15 @@ async function checkAndStartJob(job: RenderJob) {
   
   const frameRange = job.useCustomFrameRange ? job.frameRanges : `${job.originalFrameStart}-${job.originalFrameEnd}`;
   const frames = parseFrameRanges(frameRange);
-  
+
   if (frames.length === 0) return;
-  
+
+  // Blender skips frames that are already rendered by itself (unless the job is set to overwrite)
+  if (job.applicationType === ApplicationType.BLENDER && (job.appSettings as any)?.skipExisting !== false) {
+    startJobRender(job);
+    return;
+  }
+
   // Check for existing frames
   const result = await api.checkExistingFrames({
     outputDir: job.outputDir,
@@ -1948,21 +1985,31 @@ async function checkAndStartJob(job: RenderJob) {
   }
 }
 
-function startJobRender(job: RenderJob) {
-  renderQueue.startRendering();
-  renderQueue.updateJob(job.id, { 
-    status: 'rendering',
-    renderStartTime: Date.now(),
-    progress: 0,
-    currentFrame: 0,
-  });
-  
+function startJobRender(job: RenderJob, { resume = false }: { resume?: boolean } = {}) {
+  if (resume) {
+    // keep the queue position; the job itself continues from what is already rendered
+    renderQueue.isRendering = true;
+    renderQueue.isPaused = false;
+    renderQueue.updateJob(job.id, { status: 'rendering', renderStartTime: Date.now(), error: null });
+  } else {
+    renderQueue.startRendering();
+    renderQueue.updateJob(job.id, {
+      status: 'rendering',
+      renderStartTime: Date.now(),
+      progress: 0,
+      currentFrame: 0,
+      estimatedTimeRemaining: 0,
+      frameTimes: [],
+      error: null,
+    });
+  }
+
   const frameRange = job.useCustomFrameRange ? job.frameRanges : `${job.originalFrameStart}-${job.originalFrameEnd}`;
   const appType = job.applicationType || ApplicationType.BLENDER;
   const appPath = getAppPathForJob(job);
-  
+
   const api = (window as any).electronAPI;
-  
+
   // Use new multi-app render if available
   if (api.startAppRender) {
     // Convert reactive objects to plain objects for IPC serialization
@@ -1973,6 +2020,7 @@ function startJobRender(job: RenderJob) {
       jobId: job.id,
       appType,
       appSettings: getAppSettingsForJob(job),
+      resume,
     }));
     api.startAppRender(renderParams);
   } else {
@@ -1995,11 +2043,20 @@ function getAppSettingsForJob(job: RenderJob): any {
   
   // Merge global settings with job-specific settings
   switch (appType) {
-    case ApplicationType.BLENDER:
-      return {
-        ...globalSettings,
-        ...jobSettings, // Include engine, cyclesDevice, resolution, outputPath overrides
-      };
+    case ApplicationType.BLENDER: {
+      // The global engine/device defaults are not user choices: passing them would force every
+      // file into Cycles. Only per-job overrides change the file's own engine and device.
+      const { engine: _engine, device: _device, ...globalRest } = globalSettings;
+      const blender: any = { ...globalRest, ...jobSettings };
+      if (blender.splitViewLayers) {
+        const layers = blender.viewLayers?.length
+          ? blender.viewLayers
+          : (job.viewLayers || []).filter(vl => vl.use).map(vl => vl.name);
+        blender.splitLayers = layers;
+        if (layers.length === 0) blender.splitViewLayers = false;
+      }
+      return blender;
+    }
     case ApplicationType.MAYA:
       return {
         ...globalSettings,
@@ -2072,17 +2129,10 @@ async function resumeRendering() {
   await (window as any).electronAPI.resumeRender();
   renderQueue.resumeRendering();
   
-  // Restart render for current job
+  // Restart the current job with its own application and settings.
+  // Blender jobs continue where they stopped (finished frames are skipped).
   if (renderQueue.currentJob) {
-    const job = renderQueue.currentJob;
-    const frameRange = job.useCustomFrameRange ? job.frameRanges : `${job.originalFrameStart}-${job.originalFrameEnd}`;
-    
-    await (window as any).electronAPI.startRender({
-      blenderPath: renderQueue.blenderPath,
-      blendFile: job.filePath,
-      frameRanges: frameRange,
-      jobId: job.id,
-    });
+    startJobRender(renderQueue.currentJob, { resume: true });
   }
 }
 

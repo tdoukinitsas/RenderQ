@@ -87,7 +87,7 @@ npm run electron:build
 
 ### Application Configuration
 Each application has its own settings tab:
-- **Blender**: Render engine, device (CPU/GPU), samples
+- **Blender**: Render engine, device (CPU/GPU), view layers, skipping rendered frames, pre-render Python (see Blender Jobs)
 - **Cinema 4D**: Take name, thread count
 - **Houdini**: Render node path (e.g., `/out/mantra1`)
 - **After Effects**: Composition name, multi-frame rendering
@@ -99,7 +99,17 @@ Each application has its own settings tab:
 3. Use "Stop" to cancel the current render
 4. Jobs with missing applications are automatically skipped with an error
 
+### Blender Jobs
+- Blender loads the file once per run of frames (`-s … -e … -a`), not once per frame. Movie outputs are always written in a single run.
+- **Skip frames that are already rendered** (on by default): before rendering, RenderQ asks Blender which output files already exist and only renders the rest. Stop, pause or close RenderQ at any time; starting again continues where it left off. Empty placeholder files left by an interrupted render are removed.
+- **View layers**: choose which of the file's view layers to render. **Render view layers separately** runs one Blender process per layer (much less memory), interleaved in chunks (**Frames per Blender process**, default 100) so complete frames arrive progressively. File Output nodes fed only by other layers are muted; each layer's main output goes to a sub-folder named after the layer.
+- **Allow Python drivers & scripts** (on by default): the file's Python drivers and scripts run, as in Blender with auto-run enabled. The job card warns when a file has Python drivers and scripts are off.
+- Renders use your Blender preferences and add-ons (GPU devices included); **Factory startup** ignores them.
+- **Pre-render Python**: code run inside Blender before rendering, with `bpy`, `scene` and `layer` (the view layer of a split render) available, e.g. to call a set-up script stored in the file.
+- A process that crashes after it started rendering is retried twice from the frame it stopped at.
+
 ### Overwrite Warning
+For Blender jobs this appears only when "Skip frames that are already rendered" is off.
 When frames already exist in the output directory:
 - **Overwrite**: Delete existing frames and render everything
 - **Adjust Range**: Render only missing frames

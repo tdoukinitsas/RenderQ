@@ -116,8 +116,14 @@
           </template>
           <template v-else>
             {{ Math.round(job.progress) }}%
-            <template v-if="job.status === 'rendering' || job.status === 'paused'">
+            <template v-if="job.status === 'rendering' && job.renderPhase === 'probe'">
+              • Checking for already rendered frames…
+            </template>
+            <template v-else-if="job.status === 'rendering' || job.status === 'paused'">
               • Frame {{ job.currentFrame }} / {{ job.totalFrames }}
+              <template v-if="job.status === 'rendering' && (job.currentLayer || job.currentFrameNumber)">
+                ({{ job.currentLayer ? `${job.currentLayer} ` : '' }}{{ job.currentFrameNumber ? `f${job.currentFrameNumber}` : '' }})
+              </template>
               <template v-if="job.totalSamples > 0">
                 • Sample {{ job.currentSample }} / {{ job.totalSamples }}
               </template>
@@ -140,7 +146,7 @@
             <label>Render Engine</label>
             <select 
               class="form-input form-input--sm"
-              :value="job.appSettings?.engine || job.renderEngine"
+              :value="job.appSettings?.engine || ''"
               @change="updateBlenderEngine($event)"
               :disabled="job.status === 'rendering'"
             >
@@ -166,6 +172,95 @@
             </select>
           </div>
         </div>
+
+        <!-- View layers -->
+        <div v-if="(job.viewLayers?.length || 0) > 1" class="job-item__subsection">
+          <label class="job-item__sublabel">View Layers</label>
+          <div class="job-item__layer-list">
+            <label v-for="vl in job.viewLayers" :key="vl.name" class="checkbox">
+              <input
+                type="checkbox"
+                :checked="selectedViewLayers.includes(vl.name)"
+                @change="toggleViewLayer(vl.name, ($event.target as HTMLInputElement).checked)"
+                :disabled="job.status === 'rendering'"
+              />
+              <span>{{ vl.name }}</span>
+            </label>
+          </div>
+          <label class="checkbox" :title="'Renders every view layer in its own Blender process (much less memory). ' +
+            'Use it when each view layer writes its own outputs (e.g. File Output nodes per layer). ' +
+            'Each layer\'s main output goes to a sub-folder named after the layer.'">
+            <input
+              type="checkbox"
+              :checked="!!blenderSettings.splitViewLayers"
+              @change="updateBlenderSetting('splitViewLayers', ($event.target as HTMLInputElement).checked || undefined)"
+              :disabled="job.status === 'rendering' || selectedViewLayers.length < 2"
+            />
+            <span>Render view layers separately</span>
+          </label>
+        </div>
+
+        <div class="job-item__detail-grid">
+          <div class="job-item__detail job-item__detail--editable">
+            <label>Frames per Blender process</label>
+            <input
+              type="number"
+              class="form-input form-input--sm"
+              :value="blenderSettings.chunkSize || ''"
+              @change="updateBlenderSetting('chunkSize', parseInt(($event.target as HTMLInputElement).value) || undefined)"
+              :disabled="job.status === 'rendering' || movieOnly"
+              min="1"
+              :placeholder="blenderSettings.splitViewLayers ? 'Auto (100)' : 'Auto (whole range)'"
+              title="Blender reloads the file once per process. Smaller chunks spread the frames of split view layers evenly (complete frames arrive sooner); movies are always written in one go."
+            />
+          </div>
+        </div>
+
+        <div class="job-item__subsection">
+          <label class="checkbox" title="Frames whose output file already exists are not rendered again. Stop and start at any time: the render continues where it left off.">
+            <input
+              type="checkbox"
+              :checked="blenderSettings.skipExisting !== false"
+              @change="updateBlenderSetting('skipExisting', ($event.target as HTMLInputElement).checked ? undefined : false)"
+              :disabled="job.status === 'rendering' || movieOnly"
+            />
+            <span>Skip frames that are already rendered{{ movieOnly ? ' (not for movie output)' : '' }}</span>
+          </label>
+          <label class="checkbox" title="Python drivers and scripts stored in the file run, as when you open it in Blender and allow auto-run.">
+            <input
+              type="checkbox"
+              :checked="blenderSettings.allowPythonScripts !== false"
+              @change="updateBlenderSetting('allowPythonScripts', ($event.target as HTMLInputElement).checked ? undefined : false)"
+              :disabled="job.status === 'rendering'"
+            />
+            <span>Allow Python drivers &amp; scripts</span>
+          </label>
+          <p v-if="blenderSettings.allowPythonScripts === false && (job.pythonDriverCount || 0) > 0" class="job-item__warning">
+            This file has {{ job.pythonDriverCount }} Python driver(s); they will not evaluate with scripts disabled.
+          </p>
+          <label class="checkbox" title="Start Blender with factory settings: ignores your preferences and add-ons (GPU devices then come only from 'Compute Device').">
+            <input
+              type="checkbox"
+              :checked="!!blenderSettings.factoryStartup"
+              @change="updateBlenderSetting('factoryStartup', ($event.target as HTMLInputElement).checked || undefined)"
+              :disabled="job.status === 'rendering'"
+            />
+            <span>Factory startup (no preferences / add-ons)</span>
+          </label>
+        </div>
+
+        <details class="job-item__advanced" :open="!!blenderSettings.preRenderPython">
+          <summary>Pre-render Python</summary>
+          <textarea
+            class="form-input form-input--mono job-item__code"
+            rows="4"
+            :value="blenderSettings.preRenderPython || ''"
+            @change="updateBlenderSetting('preRenderPython', ($event.target as HTMLTextAreaElement).value.trim() || undefined)"
+            :disabled="job.status === 'rendering'"
+            placeholder="# runs inside Blender before rendering&#10;# available: bpy, scene, layer (view layer of a split render, else None)"
+            spellcheck="false"
+          ></textarea>
+        </details>
       </div>
 
       <!-- Maya-specific settings -->
@@ -340,7 +435,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { RenderJob } from '~/stores/renderQueue';
-import { ApplicationType, APPLICATION_INFO } from '~/types/applications';
+import { ApplicationType, APPLICATION_INFO, type BlenderRenderSettings } from '~/types/applications';
 import type { GpuCapabilities } from '~/types/electron';
 
 // Legacy type alias
@@ -407,6 +502,37 @@ const useCustomOutputPath = computed(() => {
 const customOutputPath = computed(() => {
   return props.job.appSettings?.outputPath || props.job.outputPath;
 });
+
+// Blender job options (unset keys = defaults: file's view layers, auto chunks, skip existing, scripts allowed)
+const blenderSettings = computed<BlenderRenderSettings>(() => (props.job.appSettings || {}) as BlenderRenderSettings);
+
+// The file writes a movie and no pre-render script could switch it to images: no chunks, no skipping
+const movieOnly = computed(() => !!props.job.isVideoOutput && !blenderSettings.value.preRenderPython);
+
+const selectedViewLayers = computed<string[]>(() => {
+  const chosen = blenderSettings.value.viewLayers;
+  if (chosen?.length) return chosen;
+  return (props.job.viewLayers || []).filter(vl => vl.use).map(vl => vl.name);
+});
+
+function updateBlenderSetting<K extends keyof BlenderRenderSettings>(key: K, value: BlenderRenderSettings[K] | undefined) {
+  const next: any = { ...(props.job.appSettings || {}) };
+  if (value === undefined) delete next[key];
+  else next[key] = value;
+  emit('update', { appSettings: Object.keys(next).length > 0 ? next : undefined });
+}
+
+function toggleViewLayer(name: string, checked: boolean) {
+  const all = (props.job.viewLayers || []).map(vl => vl.name);
+  const set = new Set(selectedViewLayers.value);
+  if (checked) set.add(name);
+  else set.delete(name);
+  if (set.size === 0) return;   // at least one layer
+  const chosen = all.filter(n => set.has(n));
+  const fileDefault = (props.job.viewLayers || []).filter(vl => vl.use).map(vl => vl.name);
+  const same = chosen.length === fileDefault.length && chosen.every((n, i) => n === fileDefault[i]);
+  updateBlenderSetting('viewLayers', same ? undefined : chosen);
+}
 
 // Methods for updating Blender settings
 function updateBlenderEngine(event: Event) {
@@ -966,6 +1092,47 @@ onUnmounted(() => {
     font-size: $font-size-xs;
     color: $text-tertiary;
     margin: 0;
+  }
+
+  &__subsection {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-02;
+    margin-bottom: $spacing-04;
+  }
+
+  &__sublabel {
+    font-size: $font-size-xs;
+    color: $text-tertiary;
+  }
+
+  &__layer-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $spacing-02 $spacing-04;
+  }
+
+  &__warning {
+    font-size: $font-size-xs;
+    color: $status-paused;
+    margin: 0;
+  }
+
+  &__advanced {
+    margin-bottom: $spacing-04;
+
+    summary {
+      cursor: pointer;
+      font-size: $font-size-xs;
+      color: $text-tertiary;
+      margin-bottom: $spacing-02;
+    }
+  }
+
+  &__code {
+    width: 100%;
+    resize: vertical;
+    font-size: $font-size-xs;
   }
   
   &__output {

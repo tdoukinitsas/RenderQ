@@ -6,6 +6,7 @@ const os = require('os');
 const Store = require('electron-store');
 const sharp = require('sharp');
 const { autoUpdater } = require('electron-updater');
+const { BlenderRenderJob } = require('./blenderRender');
 
 // Application type constants (mirroring types/applications.ts)
 const ApplicationType = {
@@ -56,7 +57,20 @@ const tempQueuePath = path.join(os.tmpdir(), 'renderq-temp.json');
 
 let mainWindow;
 let currentRenderProcess = null;
+let currentBlenderJob = null;   // BlenderRenderJob while a Blender queue item runs
 let isPaused = false;
+
+// Kill a render process and everything it started (Blender, aerender, ...).
+function killProcessTree(proc) {
+  if (!proc || proc.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    exec(`taskkill /pid ${proc.pid} /T /F`, (error) => {
+      if (error) console.error('Error killing process:', error.message);
+    });
+  } else {
+    try { proc.kill('SIGKILL'); } catch (e) { console.error('Error killing process:', e); }
+  }
+}
 
 // ============================================================
 // SYSTEM MONITOR - Throttling and caching to prevent spawning multiple processes
@@ -1585,7 +1599,27 @@ output_pattern = os.path.basename(output_path)
 
 video_formats = ['FFMPEG', 'AVI_JPEG', 'AVI_RAW']
 file_format = scene.render.image_settings.file_format
-is_video_output = file_format in video_formats
+is_video_output = bool(getattr(scene.render, 'is_movie_format', file_format in video_formats))
+
+# Drivers whose expression needs Python (not Blender's built-in simple-expression evaluator):
+# they only evaluate when the file is allowed to run scripts.
+python_drivers = 0
+def _count(idb):
+    global python_drivers
+    ad = getattr(idb, 'animation_data', None)
+    for fc in (ad.drivers if ad else []):
+        d = fc.driver
+        if d.type == 'SCRIPTED' and not getattr(d, 'is_simple_expression', True):
+            python_drivers += 1
+try:
+    for coll in (bpy.data.objects, bpy.data.scenes, bpy.data.materials, bpy.data.node_groups, bpy.data.worlds,
+                 bpy.data.lights, bpy.data.cameras, bpy.data.meshes, bpy.data.shape_keys, bpy.data.curves):
+        for idb in coll:
+            _count(idb)
+            if getattr(idb, 'node_tree', None):
+                _count(idb.node_tree)
+except Exception as e:
+    print('driver scan failed:', e)
 
 info = {
     "frameStart": scene.frame_start,
@@ -1601,7 +1635,9 @@ info = {
         "percentage": scene.render.resolution_percentage
     },
     "format": file_format,
-    "isVideoOutput": is_video_output
+    "isVideoOutput": is_video_output,
+    "viewLayers": [{"name": vl.name, "use": vl.use} for vl in scene.view_layers],
+    "pythonDriverCount": python_drivers,
 }
 
 print("BLEND_INFO_JSON:" + json.dumps(info))
@@ -1612,8 +1648,9 @@ sys.exit(0)
     const tempPyPath = path.join(os.tmpdir(), `get_blend_info_${Date.now()}.py`);
     fs.writeFileSync(tempPyPath, pythonScript);
 
-    const args = ['-b', blendFile, '--python-exit-code', '1', '--python', tempPyPath];
-    const proc = spawnTracked(blenderPath, args, { 
+    // --disable-autoexec: only reading settings, the file's own scripts need not run
+    const args = ['-b', blendFile, '--disable-autoexec', '--python-exit-code', '1', '--python', tempPyPath];
+    const proc = spawnTracked(blenderPath, args, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
     }, { name: 'blender-scene-info' });
@@ -1744,13 +1781,13 @@ async function getMayaSceneInfo(sceneFile) {
 /**
  * Start rendering for any application type
  */
-ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRanges, jobId, appType, appSettings }) => {
+ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRanges, jobId, appType, appSettings, resume }) => {
   // Determine app type from file extension if not provided
   const detectedAppType = appType || getAppTypeFromExtension(sceneFile);
-  
+
   switch (detectedAppType) {
     case ApplicationType.BLENDER:
-      return startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
+      return startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume });
     case ApplicationType.CINEMA4D:
       return startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     case ApplicationType.HOUDINI:
@@ -1767,196 +1804,38 @@ ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRang
 });
 
 /**
- * Start Blender render
+ * Start Blender render (see electron/blenderRender.js): probes the file for finished frames, then renders the
+ * missing ones with one Blender process per contiguous run / chunk / view layer.
  */
-function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings }) {
-  console.log('[Blender Render] Starting with appSettings:', JSON.stringify(appSettings, null, 2));
-  return new Promise((resolve, reject) => {
-    isPaused = false;
-
-    // Dedicated temp dir for the entire job to reduce cross-process temp interference.
-    const renderTempDir = makeTempDirSync(`renderq_render_${jobId || 'job'}`);
-    
-    const frames = parseFrameRanges(frameRanges);
-    let currentFrameIndex = 0;
-    
-    const renderNextFrame = () => {
-      if (isPaused) {
-        mainWindow.webContents.send('render-paused', { jobId });
-        return;
-      }
-      
-      if (currentFrameIndex >= frames.length) {
-        mainWindow.webContents.send('render-complete', { jobId });
-        currentRenderProcess = null;
-        safeRmSync(renderTempDir);
-        resolve({ success: true });
-        return;
-      }
-      
-      const frame = frames[currentFrameIndex];
-      const args = ['-b', '--factory-startup', '--disable-autoexec', sceneFile];
-      
-      // Add render engine if specified
-      if (appSettings?.engine) {
-        console.log('[Blender Render] Using engine:', appSettings.engine);
-        args.push('-E', appSettings.engine);
-      }
-      
-      // Build Python expression for settings that need to be applied
-      let pythonExprParts = [];
-      
-      // Add cycles device configuration via Python (required because --factory-startup resets preferences)
-      console.log('[Blender Render] cyclesDevice:', appSettings?.cyclesDevice, 'engine:', appSettings?.engine);
-      if (appSettings?.cyclesDevice && appSettings.cyclesDevice !== 'CPU' && (!appSettings?.engine || appSettings.engine === 'CYCLES')) {
-        // Enable the compute device type in preferences and activate all devices
-        const deviceType = appSettings.cyclesDevice.toUpperCase();
-        pythonExprParts.push(
-          `import bpy`,
-          `prefs = bpy.context.preferences.addons['cycles'].preferences`,
-          `prefs.compute_device_type = '${deviceType}'`,
-          `prefs.get_devices()`,
-          `[setattr(d, 'use', True) for d in prefs.devices if d.type == '${deviceType}' or d.type == 'CPU']`,
-          `bpy.context.scene.cycles.device = 'GPU'`
-        );
-      }
-      
-      // Add resolution override
-      if (appSettings?.resolution?.x && appSettings?.resolution?.y) {
-        if (pythonExprParts.length === 0) {
-          pythonExprParts.push(`import bpy`);
-        }
-        pythonExprParts.push(
-          `bpy.context.scene.render.resolution_x = ${appSettings.resolution.x}`,
-          `bpy.context.scene.render.resolution_y = ${appSettings.resolution.y}`,
-          `bpy.context.scene.render.resolution_percentage = ${appSettings.resolution?.percentage || 100}`
-        );
-      }
-      
-      // Add the Python expression if we have any parts
-      if (pythonExprParts.length > 0) {
-        const pythonExpr = pythonExprParts.join('; ');
-        console.log('[Blender Render] Python expression:', pythonExpr);
-        args.push('--python-expr', pythonExpr);
-      }
-      
-      console.log('[Blender Render] Final args:', args);
-      
-      // Add output path override if specified
-      if (appSettings?.outputPath) {
-        args.push('-o', appSettings.outputPath);
-      }
-      
-      // Add frame to render
-      args.push('-f', String(frame));
-      
-      currentRenderProcess = spawnTracked(appPath, args, {
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          TEMP: renderTempDir,
-          TMP: renderTempDir,
-        },
-      }, { name: `blender-render:${jobId || 'job'}` });
-
-      let lastOutputPath = null;
-
-      currentRenderProcess.stdout.on('data', (data) => {
-        const output = data.toString();
-        
-        const savedMatch = output.match(/Saved:\s*'?([^'\n]+)'?/);
-        if (savedMatch) {
-          lastOutputPath = savedMatch[1].trim();
-          mainWindow.webContents.send('frame-rendered', {
-            jobId,
-            frame,
-            outputPath: lastOutputPath,
-            currentFrameIndex,
-            totalFrames: frames.length
-          });
-        }
-
-        const sampleMatch = output.match(/Sample\s+(\d+)\/(\d+)/);
-        if (sampleMatch) {
-          mainWindow.webContents.send('render-progress', {
-            jobId,
-            frame,
-            currentSample: parseInt(sampleMatch[1]),
-            totalSamples: parseInt(sampleMatch[2]),
-            currentFrameIndex,
-            totalFrames: frames.length
-          });
-        }
-
-        const tileMatch = output.match(/Rendered\s+(\d+)\/(\d+)\s+Tiles/);
-        if (tileMatch) {
-          mainWindow.webContents.send('render-progress', {
-            jobId,
-            frame,
-            currentTile: parseInt(tileMatch[1]),
-            totalTiles: parseInt(tileMatch[2]),
-            currentFrameIndex,
-            totalFrames: frames.length
-          });
-        }
-
-        mainWindow.webContents.send('render-output', { jobId, output });
-      });
-
-      currentRenderProcess.stderr.on('data', (data) => {
-        mainWindow.webContents.send('render-output', { jobId, output: data.toString() });
-      });
-
-      currentRenderProcess.on('close', (code) => {
-        if (code === 0 || code === null) {
-          // Generate EXR preview *between frames* to avoid running multiple Blender instances concurrently
-          // (which has been observed to crash Blender on Windows with exit code 11).
-          (async () => {
-            try {
-              if (lastOutputPath && String(lastOutputPath).toLowerCase().endsWith('.exr')) {
-                await waitForStableFile(lastOutputPath, { timeoutMs: 5000, intervalMs: 200, stableIterations: 2 });
-                const previewData = await convertExrToPngBase64(lastOutputPath, appPath, 'Combined');
-                mainWindow?.webContents?.send('frame-preview', {
-                  jobId,
-                  outputPath: lastOutputPath,
-                  data: previewData
-                });
-              }
-            } catch (e) {
-              // Preview failures should not fail the render.
-              console.warn('[EXR Preview] Failed to generate preview:', e?.message || e);
-            } finally {
-              currentFrameIndex++;
-              renderNextFrame();
-            }
-          })();
-        } else if (!isPaused) {
-          mainWindow.webContents.send('render-error', {
-            jobId,
-            frame,
-            error: `Render process exited with code ${code}`
-          });
-          currentRenderProcess = null;
-          safeRmSync(renderTempDir);
-          resolve({ success: false, error: `Exit code: ${code}` });
-        }
-      });
-
-      currentRenderProcess.on('error', (error) => {
-        mainWindow.webContents.send('render-error', {
-          jobId,
-          frame,
-          error: error.message
-        });
-        currentRenderProcess = null;
-        safeRmSync(renderTempDir);
-        reject(error);
-      });
-    };
-
-    renderNextFrame();
+async function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume }) {
+  isPaused = false;
+  const job = new BlenderRenderJob({
+    appPath,
+    sceneFile,
+    frameRanges,
+    jobId,
+    settings: appSettings || {},
+    resume: !!resume,
+    deps: {
+      spawn: spawnTracked,
+      send: (channel, data) => mainWindow?.webContents?.send(channel, data),
+      kill: killProcessTree,
+      makeTempDir: makeTempDirSync,
+      removeDir: safeRmSync,
+      setCurrentProcess: (proc) => { currentRenderProcess = proc; },
+      previewExr: async (exrPath, { allowBlender }) => {
+        await waitForStableFile(exrPath, { timeoutMs: 5000, intervalMs: 200, stableIterations: 2 });
+        return convertExrToPngBase64(exrPath, appPath, 'Combined', { allowBlender });
+      },
+      log: (...args) => console.log(...args),
+    },
   });
+  currentBlenderJob = job;
+  try {
+    return await job.run();
+  } finally {
+    if (currentBlenderJob === job) currentBlenderJob = null;
+  }
 }
 
 /**
@@ -2557,7 +2436,9 @@ ipcMain.handle('start-render', async (event, { blenderPath, blendFile, frameRang
 // Pause rendering
 ipcMain.handle('pause-render', async () => {
   isPaused = true;
-  if (currentRenderProcess) {
+  if (currentBlenderJob) {
+    currentBlenderJob.pause();   // kills the current Blender process; finished frames stay on disk
+  } else if (currentRenderProcess) {
     // On Windows, we need to kill the process to pause
     // The state will be preserved and can be resumed
     currentRenderProcess.kill('SIGTERM');
@@ -2574,7 +2455,10 @@ ipcMain.handle('resume-render', async () => {
 // Stop rendering
 ipcMain.handle('stop-render', async () => {
   isPaused = false;
-  if (currentRenderProcess) {
+  if (currentBlenderJob) {
+    currentBlenderJob.stop();
+    currentRenderProcess = null;
+  } else if (currentRenderProcess) {
     // On Windows, we need to kill the process tree
     if (process.platform === 'win32') {
       try {
@@ -3144,7 +3028,7 @@ async function getExrLayersFromFile(exrPath) {
   return deriveExrLayerNamesFromChannels(channels);
 }
 
-async function convertExrToPngBase64(exrPath, blenderPath, layer = 'Combined') {
+async function convertExrToPngBase64(exrPath, blenderPath, layer = 'Combined', { allowBlender = true } = {}) {
   // First try sharp (works on some platforms/builds).
   try {
     const pngBuffer = await sharp(exrPath)
@@ -3155,6 +3039,7 @@ async function convertExrToPngBase64(exrPath, blenderPath, layer = 'Combined') {
     return `data:image/png;base64,${pngBuffer.toString('base64')}`;
   } catch (sharpError) {
     // Fall back to Blender conversion for Windows + Blender multipart EXRs.
+    if (!allowBlender) throw sharpError;   // caller retries later, when no Blender render is running
     console.warn('Sharp EXR decode failed, falling back to Blender:', sharpError?.message || sharpError);
   }
 

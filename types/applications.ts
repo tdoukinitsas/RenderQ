@@ -379,6 +379,8 @@ export interface SceneInfo {
   format?: string;
   isVideoOutput?: boolean;
   // Application-specific info
+  viewLayers?: BlenderViewLayerInfo[];  // Blender
+  pythonDriverCount?: number;           // Blender: drivers that need Python to evaluate
   takeName?: string;       // Cinema 4D
   renderNode?: string;     // Houdini, Nuke
   composition?: string;    // After Effects
@@ -399,6 +401,28 @@ export interface BlenderRenderSettings {
     y: number;
     percentage?: number;
   };
+  /** View layers to render (undefined = the ones enabled in the file) */
+  viewLayers?: string[];
+  /** Render each view layer in its own Blender process (lower memory; each layer writes its own outputs) */
+  splitViewLayers?: boolean;
+  /** Resolved list of layers for a split render (filled in when the job starts) */
+  splitLayers?: string[];
+  /** Frames per Blender process; 0/undefined = auto (whole range, or 100 when splitting view layers) */
+  chunkSize?: number;
+  /** Skip frames whose output file already exists (default true) */
+  skipExisting?: boolean;
+  /** Let the file run Python drivers / scripts (default true, like opening it in Blender with auto-run on) */
+  allowPythonScripts?: boolean;
+  /** Start Blender with factory settings instead of the user's preferences and add-ons (default false) */
+  factoryStartup?: boolean;
+  /** Python run inside Blender before rendering; globals: bpy, scene, layer */
+  preRenderPython?: string;
+}
+
+/** A view layer as stored in a .blend file */
+export interface BlenderViewLayerInfo {
+  name: string;
+  use: boolean;
 }
 
 export interface Cinema4DRenderSettings {

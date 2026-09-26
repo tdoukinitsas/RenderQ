@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia';
-import { 
-  ApplicationType, 
+import {
+  ApplicationType,
   APPLICATION_INFO,
   type AppInstallation,
   type ApplicationRenderSettings,
+  type BlenderViewLayerInfo,
 } from '~/types/applications';
 
 /**
@@ -64,6 +65,12 @@ export interface RenderJob {
   appSettings?: ApplicationRenderSettings;
   
   // App-specific fields
+  // Blender
+  viewLayers?: BlenderViewLayerInfo[];   // from the file
+  pythonDriverCount?: number;            // drivers that need "Allow Python drivers & scripts"
+  currentLayer?: string | null;          // view layer being rendered (split renders)
+  currentFrameNumber?: number;           // scene frame being rendered
+  renderPhase?: 'probe' | 'render' | null;
   // Cinema 4D
   takeName?: string;
   // Houdini
@@ -231,7 +238,9 @@ export const useRenderQueueStore = defineStore('renderQueue', {
           const frames = parseFrameRanges(job.useCustomFrameRange ? job.frameRanges : `${job.originalFrameStart}-${job.originalFrameEnd}`);
           return total + frames.length;
         } else if (job.status === 'rendering' || job.status === 'paused') {
-          return total + job.currentFrame;
+          // progress is unit-agnostic (a Blender job may count frames x view layers)
+          const frames = parseFrameRanges(job.useCustomFrameRange ? job.frameRanges : `${job.originalFrameStart}-${job.originalFrameEnd}`);
+          return total + Math.round((job.progress / 100) * frames.length);
         }
         return total;
       }, 0);
@@ -490,6 +499,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
           exrLayers: job.exrLayers ?? [],
           // App-specific settings
           appSettings: job.appSettings,
+          viewLayers: job.viewLayers,
+          pythonDriverCount: job.pythonDriverCount,
           takeName: job.takeName,
           renderNode: job.renderNode,
           composition: job.composition,
@@ -524,6 +535,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
             // App-specific fields
             appExecutablePath: job.appExecutablePath,
             appSettings: job.appSettings,
+            viewLayers: job.viewLayers,
+            pythonDriverCount: job.pythonDriverCount,
             takeName: job.takeName,
             renderNode: job.renderNode,
             composition: job.composition,
