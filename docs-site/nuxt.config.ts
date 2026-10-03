@@ -13,22 +13,22 @@ export default defineNuxtConfig({
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { name: 'description', content: 'Free, open-source render queue manager for Blender, Cinema 4D, Houdini, After Effects, and Nuke. Available for Windows, macOS, and Linux.' },
+        { name: 'description', content: 'Free, open-source render queue manager for Blender, Cinema 4D, Houdini, After Effects, Nuke and Maya. Available for Windows, macOS, and Linux.' },
         { name: 'theme-color', content: '#4589ff' },
         // Open Graph
         { property: 'og:title', content: 'RenderQ - Multi-Application Render Queue Manager' },
-        { property: 'og:description', content: 'Free, open-source render queue manager for Blender, Cinema 4D, Houdini, After Effects, and Nuke. Available for Windows, macOS, and Linux.' },
+        { property: 'og:description', content: 'Free, open-source render queue manager for Blender, Cinema 4D, Houdini, After Effects, Nuke and Maya. Available for Windows, macOS, and Linux.' },
         { property: 'og:type', content: 'website' },
         { property: 'og:url', content: 'https://tdoukinitsas.github.io/RenderQ/' },
-        { property: 'og:image', content: 'https://tdoukinitsas.github.io/RenderQ/screenshots/renderq_screenshot.jpg' },
+        { property: 'og:image', content: 'https://tdoukinitsas.github.io/RenderQ/screenshots/renderq-screenshot.jpg' },
         { property: 'og:image:width', content: '1920' },
         { property: 'og:image:height', content: '1080' },
         { property: 'og:image:type', content: 'image/jpeg' },
         // Twitter Card
         { name: 'twitter:card', content: 'summary_large_image' },
         { name: 'twitter:title', content: 'RenderQ - Multi-Application Render Queue Manager' },
-        { name: 'twitter:description', content: 'Free, open-source render queue manager for Blender, Cinema 4D, Houdini, After Effects, and Nuke. Available for Windows, macOS, and Linux.' },
-        { name: 'twitter:image', content: 'https://tdoukinitsas.github.io/RenderQ/screenshots/renderq_screenshot.jpg' }
+        { name: 'twitter:description', content: 'Free, open-source render queue manager for Blender, Cinema 4D, Houdini, After Effects, Nuke and Maya. Available for Windows, macOS, and Linux.' },
+        { name: 'twitter:image', content: 'https://tdoukinitsas.github.io/RenderQ/screenshots/renderq-screenshot.jpg' }
       ],
       link: [
         { rel: 'icon', type: 'image/x-icon', href: '/RenderQ/favicon.ico' },

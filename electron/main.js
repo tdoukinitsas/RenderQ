@@ -16,6 +16,7 @@ const ApplicationType = {
   HOUDINI: 'houdini',
   AFTER_EFFECTS: 'aftereffects',
   NUKE: 'nuke',
+  MAYA: 'maya',
 };
 
 // File extensions for each application
@@ -25,6 +26,7 @@ const APP_FILE_EXTENSIONS = {
   [ApplicationType.HOUDINI]: ['.hip', '.hiplc', '.hipnc'],
   [ApplicationType.AFTER_EFFECTS]: ['.aep', '.aepx'],
   [ApplicationType.NUKE]: ['.nk', '.nknc', '.nkind'],
+  [ApplicationType.MAYA]: ['.ma', '.mb'],
 };
 
 // Get all supported file extensions
@@ -1340,6 +1342,7 @@ ipcMain.handle('browse-scene-files', async () => {
       { name: 'Houdini Files', extensions: ['hip', 'hiplc', 'hipnc'] },
       { name: 'After Effects Files', extensions: ['aep', 'aepx'] },
       { name: 'Nuke Files', extensions: ['nk', 'nknc', 'nkind'] },
+      { name: 'Maya Files', extensions: ['ma', 'mb'] },
     ],
     properties: ['openFile', 'multiSelections']
   });

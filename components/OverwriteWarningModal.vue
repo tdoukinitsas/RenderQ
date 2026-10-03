@@ -1,13 +1,13 @@
 <template>
   <div class="modal-overlay" @click.self="$emit('cancel')">
-    <div class="modal overwrite-modal">
+    <div ref="dialogRef" class="modal overwrite-modal" role="alertdialog" aria-modal="true" aria-labelledby="overwrite-title">
       <div class="modal__header">
-        <div class="warning-icon">
+        <div class="warning-icon" aria-hidden="true">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
             <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
           </svg>
         </div>
-        <h2>Existing Frames Detected</h2>
+        <h2 id="overwrite-title">Existing Frames Detected</h2>
       </div>
       
       <div class="modal__body">
@@ -95,6 +95,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import type { BlendJob } from '~/stores/renderQueue';
+import { useModalDialog } from '~/composables/useModalDialog';
 
 const props = defineProps<{
   job: BlendJob;
@@ -106,6 +107,9 @@ const emit = defineEmits<{
   (e: 'adjust', frameRange: string): void;
   (e: 'cancel'): void;
 }>();
+
+const dialogRef = ref<HTMLElement | null>(null);
+useModalDialog(dialogRef, () => emit('cancel'));
 
 const showAdjustInput = ref(false);
 const adjustedFrameRange = ref('');

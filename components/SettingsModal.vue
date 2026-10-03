@@ -1,10 +1,10 @@
 <template>
   <div class="modal-overlay" @click.self="$emit('close')">
-    <div class="modal settings-modal">
+    <div ref="dialogRef" class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="modal__header">
-        <h2>Settings</h2>
-        <button class="btn btn--ghost btn--icon" @click="$emit('close')">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+        <h2 id="settings-title">Settings</h2>
+        <button class="btn btn--ghost btn--icon" @click="$emit('close')" aria-label="Close settings" title="Close (Esc)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
           </svg>
         </button>
@@ -18,6 +18,7 @@
           class="settings-tab"
           :class="{ 'settings-tab--active': activeTab === tab.id }"
           :style="getTabStyle(tab)"
+          :aria-pressed="activeTab === tab.id"
           @click="activeTab = tab.id"
         >
           {{ tab.label }}
@@ -558,13 +559,17 @@ import { ref, reactive, onMounted, computed } from 'vue';
 import { useRenderQueueStore } from '~/stores/renderQueue';
 import { useSettingsStore } from '~/stores/settings';
 import { ApplicationType } from '~/types/applications';
+import { useModalDialog } from '~/composables/useModalDialog';
 
 const renderQueue = useRenderQueueStore();
 const settings = useSettingsStore();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void;
 }>();
+
+const dialogRef = ref<HTMLElement | null>(null);
+useModalDialog(dialogRef, () => emit('close'));
 
 // Tab configuration
 const tabs = [

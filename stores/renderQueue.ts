@@ -92,6 +92,9 @@ export interface RenderJob {
 // Legacy type alias for backwards compatibility
 export type BlendJob = RenderJob;
 
+/** Actions in a job's context menu (applied to every selected job where it makes sense) */
+export type JobMenuAction = 'duplicate' | 'moveTop' | 'moveBottom' | 'reset' | 'remove';
+
 export interface RenderQueueState {
   jobs: RenderJob[];
   currentJobIndex: number;
@@ -115,7 +118,8 @@ export interface RenderQueueState {
   hasUnsavedChanges: boolean;
   
   // Selection state
-  selectedJobId: string | null;
+  selectedJobId: string | null;       // the job shown in the preview (last clicked)
+  selectedJobIds: string[];           // every selected job (Ctrl/Shift-click), includes selectedJobId
   isSequencePlayback: boolean;
   sequencePlaybackFrame: number;
   selectedExrLayer: string | null;
@@ -152,6 +156,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
     
     // Selection
     selectedJobId: null,
+    selectedJobIds: [],
     isSequencePlayback: false,
     sequencePlaybackFrame: 0,
     selectedExrLayer: null,
@@ -303,11 +308,101 @@ export const useRenderQueueStore = defineStore('renderQueue', {
     },
 
     removeJob(id: string) {
+      this.removeJobs([id]);
+    },
+
+    removeJobs(ids: string[]) {
+      // The job being rendered (or paused mid-render) stays until it is stopped
+      const busyId = this.isRendering ? this.currentJob?.id : undefined;
+      const remove = new Set(ids.filter(id => id !== busyId && this.jobs.find(j => j.id === id)?.status !== 'rendering'));
+      if (remove.size === 0) return;
+      this.reorderJobs(this.jobs.filter(j => !remove.has(j.id)));
+      this.selectedJobIds = this.selectedJobIds.filter(id => !remove.has(id));
+      if (this.selectedJobId && remove.has(this.selectedJobId)) {
+        this.selectJob(this.selectedJobIds[this.selectedJobIds.length - 1] ?? null, { keepSelection: true });
+      }
+      this.hasUnsavedChanges = true;
+    },
+
+    /** Replace the job order, keeping currentJobIndex on the job that is rendering */
+    reorderJobs(jobs: RenderJob[]) {
+      const currentId = this.currentJob?.id;
+      this.jobs = jobs;
+      if (currentId) this.currentJobIndex = this.jobs.findIndex(j => j.id === currentId);
+      this.autoSave();
+    },
+
+    duplicateJob(id: string) {
       const index = this.jobs.findIndex(j => j.id === id);
-      if (index !== -1) {
-        this.jobs.splice(index, 1);
-        this.hasUnsavedChanges = true;
-        this.autoSave();
+      // a job still reading its scene has nothing to copy yet
+      if (index === -1 || this.jobs[index].status === 'loading') return;
+      const source = JSON.parse(JSON.stringify(this.jobs[index])) as RenderJob;
+      const copy: RenderJob = {
+        ...source,
+        id: this.generateId(),
+        status: source.status === 'missing-app' ? 'missing-app' : 'idle',
+        progress: 0,
+        currentFrame: 0,
+        currentSample: 0,
+        totalSamples: 0,
+        elapsedTime: 0,
+        estimatedTimeRemaining: 0,
+        lastRenderedFrame: null,
+        lastPreviewPath: null,
+        error: source.status === 'missing-app' ? source.error : null,
+        renderStartTime: null,
+        frameTimes: [],
+        renderedFramePaths: [],
+      };
+      const jobs = [...this.jobs];
+      jobs.splice(index + 1, 0, copy);
+      this.reorderJobs(jobs);
+      this.hasUnsavedChanges = true;
+      return copy.id;
+    },
+
+    /** Move jobs (in their current order) to the top or bottom of the queue */
+    moveJobsToEdge(ids: string[], edge: 'top' | 'bottom') {
+      const move = new Set(ids);
+      const moving = this.jobs.filter(j => move.has(j.id));
+      const rest = this.jobs.filter(j => !move.has(j.id));
+      this.reorderJobs(edge === 'top' ? [...moving, ...rest] : [...rest, ...moving]);
+      this.hasUnsavedChanges = true;
+    },
+
+    /** Move jobs one place up (-1) or down (+1); a block stops at the edge of the queue */
+    moveJobsBy(ids: string[], delta: -1 | 1) {
+      const move = new Set(ids);
+      const jobs = [...this.jobs];
+      // Walk towards the edge being moved to; a job only swaps with an unselected neighbour,
+      // so selected jobs already at the edge hold back the ones behind them.
+      for (let k = 0; k < jobs.length; k++) {
+        const i = delta < 0 ? k : jobs.length - 1 - k;
+        const target = i + delta;
+        if (!move.has(jobs[i].id) || target < 0 || target >= jobs.length || move.has(jobs[target].id)) continue;
+        [jobs[i], jobs[target]] = [jobs[target], jobs[i]];
+      }
+      this.reorderJobs(jobs);
+      this.hasUnsavedChanges = true;
+    },
+
+    /** Put finished, failed or paused jobs back to pending */
+    resetJobs(ids: string[]) {
+      for (const id of ids) {
+        const job = this.jobs.find(j => j.id === id);
+        if (!job || job.status === 'rendering' || job.status === 'idle' || job.status === 'loading' || job.status === 'missing-app') continue;
+        this.updateJob(id, {
+          status: 'idle',
+          progress: 0,
+          currentFrame: 0,
+          elapsedTime: 0,
+          estimatedTimeRemaining: 0,
+          lastRenderedFrame: null,
+          error: null,
+          renderStartTime: null,
+          frameTimes: [],
+          renderedFramePaths: [],
+        });
       }
     },
 
@@ -328,19 +423,20 @@ export const useRenderQueueStore = defineStore('renderQueue', {
     },
 
     moveJob(fromIndex: number, toIndex: number) {
-      const job = this.jobs.splice(fromIndex, 1)[0];
-      this.jobs.splice(toIndex, 0, job);
-      this.autoSave();
+      const jobs = [...this.jobs];
+      const job = jobs.splice(fromIndex, 1)[0];
+      jobs.splice(toIndex, 0, job);
+      this.reorderJobs(jobs);
     },
 
     clearCompleted() {
-      this.jobs = this.jobs.filter(j => j.status !== 'complete');
-      this.autoSave();
+      this.removeJobs(this.jobs.filter(j => j.status === 'complete').map(j => j.id));
     },
 
     clearAll() {
       this.jobs = [];
       this.currentJobIndex = -1;
+      this.selectJob(null);
       this.autoSave();
     },
 
@@ -395,7 +491,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
       this.previewImage = imageData;
     },
 
-    selectJob(jobId: string | null) {
+    selectJob(jobId: string | null, { keepSelection = false }: { keepSelection?: boolean } = {}) {
       // Exit sequence playback when selecting a different job
       if (this.selectedJobId !== jobId) {
         this.isSequencePlayback = false;
@@ -403,6 +499,15 @@ export const useRenderQueueStore = defineStore('renderQueue', {
       }
       this.selectedJobId = jobId;
       this.selectedExrLayer = null; // Reset layer selection
+      if (!keepSelection) this.selectedJobIds = jobId ? [jobId] : [];
+    },
+
+    /** Set the multi-selection; the preview shows `primary` (or the last selected job) */
+    setSelection(ids: string[], primary?: string | null) {
+      const valid = ids.filter(id => this.jobs.some(j => j.id === id));
+      this.selectedJobIds = valid;
+      const next = primary !== undefined ? primary : valid[valid.length - 1] ?? null;
+      this.selectJob(next && valid.includes(next) ? next : valid[valid.length - 1] ?? null, { keepSelection: true });
     },
 
     setSequencePlayback(isPlaying: boolean) {
@@ -556,6 +661,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
             writeNode: job.writeNode,
           }));
           
+          this.selectJob(null);
           // Validate that applications are available
           this.validateJobApplications();
         }
@@ -607,8 +713,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
         });
       }
 
-      // Move to next job
-      const nextPendingIndex = this.jobs.findIndex((j, i) => i > this.currentJobIndex && j.status === 'idle');
+      // Move to the next pending job (jobs can be moved or reset above the one that just finished)
+      const nextPendingIndex = this.jobs.findIndex(j => j.status === 'idle');
       if (nextPendingIndex !== -1) {
         this.currentJobIndex = nextPendingIndex;
       } else {

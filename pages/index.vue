@@ -11,9 +11,21 @@
       </div>
       
       <div class="header__center">
+        <div v-if="!renderQueue.isRendering && queueSummary.length" class="queue-summary" aria-label="Queue summary">
+          <span v-for="item in queueSummary" :key="item.key" class="queue-summary__item" :class="`queue-summary__item--${item.key}`">
+            {{ item.text }}
+          </span>
+        </div>
         <div v-if="renderQueue.isRendering" class="global-progress global-progress--full">
           <div class="progress-bar-wrapper">
-            <div class="progress-bar">
+            <div
+              class="progress-bar"
+              role="progressbar"
+              aria-label="Queue progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              :aria-valuenow="Math.round(renderQueue.totalProgress)"
+            >
               <div 
                 class="progress-bar__fill progress-bar__fill--rendering" 
                 :style="{ width: `${renderQueue.totalProgress}%` }"
@@ -32,8 +44,18 @@
       </div>
       
       <div class="header__right">
-        <button class="btn btn--ghost btn--icon" @click="showSettings = true" title="Settings">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+        <button
+          class="btn btn--ghost btn--icon"
+          @click="showShortcuts = true"
+          title="Keyboard shortcuts (?)"
+          aria-label="Keyboard shortcuts"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/>
+          </svg>
+        </button>
+        <button class="btn btn--ghost btn--icon" @click="showSettings = true" title="Settings" aria-label="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
           </svg>
         </button>
@@ -41,18 +63,19 @@
     </header>
 
     <!-- Main content -->
-    <main class="main">
+    <main class="main" :class="{ 'main--resizing': isResizing || isVerticalResizing || layoutSettling }">
       <!-- Left panel: Queue -->
-      <section 
+      <section
+        id="queue-panel"
         class="panel panel--queue" 
         :class="{ 'panel--collapsed': queueCollapsed }"
-        :style="{ width: queueCollapsed ? '0px' : `calc(100% - ${previewPanelWidth}px)` }"
+        :style="queuePanelStyle"
       >
         <div class="panel__header" v-if="!queueCollapsed">
-          <h2>Render Queue</h2>
+          <h2 id="queue-heading">Render Queue</h2>
           <div class="panel__actions">
-            <button class="btn btn--primary btn--sm" @click="addBlendFiles">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <button class="btn btn--primary btn--sm" @click="addBlendFiles" title="Add scene files (Ctrl+I)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
               </svg>
               Add Files
@@ -60,9 +83,10 @@
             <button 
               class="btn btn--ghost btn--sm" 
               @click="() => loadQueue()"
-              title="Load Queue"
+              title="Load Queue (Ctrl+O)"
+              aria-label="Load queue"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/>
               </svg>
             </button>
@@ -70,9 +94,10 @@
               class="btn btn--ghost btn--sm" 
               @click="() => saveQueue(false)"
               :disabled="!renderQueue.hasJobs"
-              title="Save Queue"
+              title="Save Queue (Ctrl+S)"
+              aria-label="Save queue"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z"/>
               </svg>
             </button>
@@ -81,12 +106,39 @@
               @click="renderQueue.clearCompleted"
               :disabled="renderQueue.completedJobs.length === 0"
               title="Clear Completed"
+              aria-label="Clear completed jobs"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
               </svg>
             </button>
+            <button
+              class="btn btn--ghost btn--sm"
+              @click="collapseQueue"
+              title="Hide queue"
+              aria-label="Hide queue panel"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/>
+              </svg>
+            </button>
           </div>
+        </div>
+        
+        <!-- Bulk actions for a multi-selection -->
+        <div v-if="!queueCollapsed && renderQueue.selectedJobIds.length > 1" class="selection-bar" role="toolbar" aria-label="Selected jobs">
+          <span class="selection-bar__count">{{ renderQueue.selectedJobIds.length }} selected</span>
+          <button class="btn btn--ghost btn--sm" @click="renderQueue.moveJobsBy(renderQueue.selectedJobIds, -1)" title="Move up (Alt+↑)" aria-label="Move selected jobs up">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
+          </button>
+          <button class="btn btn--ghost btn--sm" @click="renderQueue.moveJobsBy(renderQueue.selectedJobIds, 1)" title="Move down (Alt+↓)" aria-label="Move selected jobs down">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+          </button>
+          <button class="btn btn--ghost btn--sm" @click="renderQueue.resetJobs(renderQueue.selectedJobIds)">Reset</button>
+          <button class="btn btn--ghost btn--sm text-error" @click="removeSelectedJobs" title="Remove (Delete)">Remove</button>
+          <button class="btn btn--ghost btn--sm selection-bar__clear" @click="renderQueue.selectJob(null)" title="Clear selection (Esc)" aria-label="Clear selection">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
         </div>
         
         <div 
@@ -103,10 +155,10 @@
             </svg>
             <h3>No files in queue</h3>
             <p>Click "Add Files" or drag & drop scene files here</p>
-            <p class="empty-state__hint">.blend, .c4d, .hip, .aep, .nk</p>
+            <p class="empty-state__hint">.blend, .c4d, .hip, .aep, .nk, .ma, .mb</p>
           </div>
           
-          <div v-else class="job-list" ref="jobListRef">
+          <div v-else class="job-list" ref="jobListRef" role="list" aria-labelledby="queue-heading">
             <div
               v-for="(job, index) in renderQueue.jobs" 
               :key="job.id"
@@ -119,11 +171,16 @@
               <RenderJobItem 
                 :job="job"
                 :index="index"
+                :total="renderQueue.jobs.length"
                 :draggable="job.status !== 'rendering'"
-                :is-selected="renderQueue.selectedJobId === job.id"
+                :is-selected="renderQueue.selectedJobIds.includes(job.id)"
+                :expanded="expandedJobIds.has(job.id)"
+                :selection-count="renderQueue.selectedJobIds.length"
                 @remove="renderQueue.removeJob(job.id)"
                 @update="(updates) => renderQueue.updateJob(job.id, updates)"
-                @select="handleJobSelect(job.id)"
+                @select="(modifiers) => handleJobSelect(job.id, modifiers)"
+                @toggle-expand="toggleJobExpanded(job.id)"
+                @action="(action) => handleJobAction(job.id, action)"
                 @dragstart="handleJobDragStart($event, index)"
                 @dragend="handleJobDragEnd"
               />
@@ -138,8 +195,9 @@
               class="btn btn--primary btn--lg"
               :disabled="renderQueue.pendingJobs.length === 0"
               @click="startRendering"
+              title="Start rendering (Space)"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M8 5v14l11-7z"/>
               </svg>
               Start Rendering
@@ -150,8 +208,9 @@
                 v-if="!renderQueue.isPaused"
                 class="btn btn--secondary btn--lg"
                 @click="pauseRendering"
+                title="Pause (Space)"
               >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                 </svg>
                 Pause
@@ -161,8 +220,9 @@
                 v-else
                 class="btn btn--primary btn--lg"
                 @click="resumeRendering"
+                title="Resume (Space)"
               >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M8 5v14l11-7z"/>
                 </svg>
                 Resume
@@ -172,7 +232,7 @@
                 class="btn btn--danger btn--lg"
                 @click="stopRendering"
               >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M6 6h12v12H6z"/>
                 </svg>
                 Stop
@@ -186,9 +246,21 @@
       <div 
         class="resize-handle"
         :class="{ 'resize-handle--dragging': isResizing, 'resize-handle--collapsed-left': queueCollapsed, 'resize-handle--collapsed-right': previewCollapsed }"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-label="Resize queue and preview panels"
+        aria-controls="queue-panel info-panel"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-valuenow="horizontalSplitValue"
+        :aria-valuetext="`Queue ${horizontalSplitValue}% of the width`"
+        title="Drag to resize · double-click to reset · Enter to hide or show the queue"
         @mousedown="startResize"
+        @dblclick="resetHorizontalLayout"
+        @keydown="handleHorizontalSplitterKey"
       >
-        <div class="resize-handle__grip">
+        <div class="resize-handle__grip" aria-hidden="true">
           <svg width="6" height="20" viewBox="0 0 6 20" fill="currentColor">
             <circle cx="1" cy="4" r="1"/>
             <circle cx="5" cy="4" r="1"/>
@@ -198,37 +270,66 @@
             <circle cx="5" cy="16" r="1"/>
           </svg>
         </div>
-        <div v-if="queueCollapsed" class="resize-handle__label resize-handle__label--left">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/>
-          </svg>
-        </div>
-        <div v-if="previewCollapsed" class="resize-handle__label resize-handle__label--right">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+        <button
+          v-if="queueCollapsed"
+          class="resize-handle__label resize-handle__label--left"
+          title="Show queue"
+          aria-label="Show queue panel"
+          tabindex="-1"
+          @mousedown.stop
+          @dblclick.stop
+          @click.stop="queueCollapsed = false"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/>
           </svg>
-        </div>
+        </button>
+        <button
+          v-if="previewCollapsed"
+          class="resize-handle__label resize-handle__label--right"
+          title="Show preview & system monitor"
+          aria-label="Show preview and system monitor panel"
+          tabindex="-1"
+          @mousedown.stop
+          @dblclick.stop
+          @click.stop="previewCollapsed = false"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/>
+          </svg>
+        </button>
       </div>
 
       <!-- Right panel: Preview & System Monitor -->
-      <section 
-        class="panel panel--info" 
+      <section
+        id="info-panel"
+        class="panel panel--info"
         :class="{ 'panel--collapsed': previewCollapsed }"
-        :style="{ width: previewCollapsed ? '0px' : `${previewPanelWidth}px` }"
+        :style="infoPanelStyle"
       >
         <!-- Preview -->
-        <div class="preview-section" v-if="!previewCollapsed" :class="{ 'preview-section--minimized': previewMinimized }" :style="{ height: `${previewPaneHeight}px` }">
+        <div
+          class="preview-section"
+          v-if="!previewCollapsed || previewFullscreen"
+          :class="{ 'preview-section--minimized': previewMinimized && !previewFullscreen, 'preview-section--fullscreen': previewFullscreen }"
+          :style="previewFullscreen ? undefined : previewSectionStyle"
+          :role="previewFullscreen ? 'dialog' : undefined"
+          :aria-modal="previewFullscreen ? 'true' : undefined"
+          aria-labelledby="preview-heading"
+        >
           <div class="panel__header">
-            <h2>Preview</h2>
+            <h2 id="preview-heading">Preview</h2>
             <div class="preview-header-controls">
               <!-- Preview Toggle -->
-              <button 
-                class="btn btn--ghost btn--sm" 
+              <button
+                class="btn btn--ghost btn--sm"
                 :class="{ 'btn--active': previewEnabled }"
                 @click="previewEnabled = !previewEnabled"
                 title="Toggle preview (disable to save performance)"
+                :aria-label="previewEnabled ? 'Turn preview off' : 'Turn preview on'"
+                :aria-pressed="previewEnabled"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path v-if="previewEnabled" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
                   <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
                 </svg>
@@ -239,6 +340,7 @@
                 class="form-select form-select--sm"
                 :value="renderQueue.selectedExrLayer || 'Combined'"
                 @change="handleExrLayerChange"
+                aria-label="EXR layer"
               >
                 <option 
                   v-for="layer in (currentPreviewJob?.exrLayers?.length ? currentPreviewJob.exrLayers : ['Combined'])" 
@@ -248,13 +350,74 @@
                   {{ layer }}
                 </option>
               </select>
-              <span v-if="previewFileName" class="preview-path">
+              <span v-if="previewFileName" class="preview-path" :title="previewFileName">
                 {{ previewFileName }}
               </span>
             </div>
+            <div class="preview-header-controls preview-header-controls--end">
+              <!-- Zoom -->
+              <div v-if="canZoomPreview" class="zoom-controls" role="group" aria-label="Zoom">
+                <button class="btn btn--ghost btn--sm" :class="{ 'btn--active': previewZoom === null }" @click="fitPreview" title="Fit to panel (0)">Fit</button>
+                <button class="btn btn--ghost btn--sm" :class="{ 'btn--active': previewZoom === 1 }" @click="setPreviewZoom(1)" title="Actual size (1)">1:1</button>
+                <span class="zoom-controls__value" aria-live="polite">{{ previewZoomPercent }}%</span>
+              </div>
+              <button
+                v-if="currentPreviewImage && previewEnabled"
+                class="btn btn--ghost btn--sm"
+                @click="openPreviewInExplorer"
+                title="Show frame in folder"
+                aria-label="Show frame in folder"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
+                </svg>
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                @click="togglePreviewFullscreen"
+                :title="previewFullscreen ? 'Exit full view (Esc)' : 'Full view (F)'"
+                :aria-label="previewFullscreen ? 'Exit full view' : 'Show preview in full view'"
+                :aria-pressed="previewFullscreen"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path v-if="previewFullscreen" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>
+                  <path v-else d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                </svg>
+              </button>
+              <button
+                v-if="!previewFullscreen"
+                class="btn btn--ghost btn--sm"
+                @click="minimizePreview"
+                title="Hide preview"
+                aria-label="Hide preview"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/>
+                </svg>
+              </button>
+              <button
+                v-if="!previewFullscreen"
+                class="btn btn--ghost btn--sm"
+                @click="collapseInfoPanel"
+                title="Hide preview & system monitor"
+                aria-label="Hide preview and system monitor panel"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/>
+                </svg>
+              </button>
+            </div>
           </div>
-          
-          <div class="preview-container" @click="handlePreviewContainerClick">
+
+          <div
+            ref="previewContainerRef"
+            class="preview-container"
+            :class="{ 'preview-container--zoomed': previewZoom !== null, 'preview-container--panning': isPanningPreview }"
+            @click="handlePreviewContainerClick"
+            @dblclick="handlePreviewDoubleClick"
+            @wheel="handlePreviewWheel"
+            @mousedown="startPreviewPan"
+          >
             <!-- Video Preview (for completed video renders) -->
             <template v-if="isVideoPreview">
               <div v-if="currentPreviewJob?.status !== 'complete'" class="empty-state empty-state--small">
@@ -286,12 +449,15 @@
                   </button>
                 </div>
               </div>
-              <img 
-                v-else 
-                :src="currentPreviewImage" 
-                alt="Render Preview"
+              <img
+                v-else
+                :src="currentPreviewImage"
+                :alt="previewFileName ? `Render preview: ${previewFileName}` : 'Render preview'"
                 class="preview-image"
-                @click.stop="openPreviewInExplorer"
+                :style="previewImageStyle"
+                draggable="false"
+                @click.stop
+                @load="handlePreviewImgLoad"
                 @error="handlePreviewImgError"
               />
             </template>
@@ -302,31 +468,57 @@
             v-if="!isVideoPreview && currentPreviewJob && (currentPreviewJob.renderedFramePaths?.length ?? 0) > 1"
             class="preview-controls"
           >
-            <button 
+            <button
+              class="btn btn--ghost btn--icon btn--sm"
+              @click="stepPreviewFrame(-1)"
+              :disabled="previewFrameIndex <= 0"
+              title="Previous frame (←)"
+              aria-label="Previous frame"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+              </svg>
+            </button>
+            <button
               class="btn btn--ghost btn--icon btn--sm"
               @click="toggleSequencePlayback"
               :title="renderQueue.isSequencePlayback ? 'Stop Playback' : 'Play Sequence'"
+              :aria-label="renderQueue.isSequencePlayback ? 'Stop playback' : 'Play sequence'"
             >
-              <svg v-if="renderQueue.isSequencePlayback" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <svg v-if="renderQueue.isSequencePlayback" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M6 6h12v12H6z"/>
               </svg>
-              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M8 5v14l11-7z"/>
               </svg>
             </button>
-            
-            <input 
+            <button
+              class="btn btn--ghost btn--icon btn--sm"
+              @click="stepPreviewFrame(1)"
+              :disabled="previewFrameIndex >= previewFrameCount - 1"
+              title="Next frame (→)"
+              aria-label="Next frame"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+              </svg>
+            </button>
+
+            <input
               type="range"
               class="preview-scrubber"
               :min="0"
-              :max="(currentPreviewJob.renderedFramePaths?.length ?? 1) - 1"
-              :value="renderQueue.isSequencePlayback ? renderQueue.sequencePlaybackFrame : (currentPreviewJob.renderedFramePaths?.length ?? 1) - 1"
+              :max="previewFrameCount - 1"
+              :value="previewFrameIndex"
               @input="handleScrubberChange"
               :disabled="renderQueue.isSequencePlayback"
+              aria-label="Rendered frames"
+              :aria-valuetext="previewFrameNumber !== null ? `Frame ${previewFrameNumber}` : `${previewFrameIndex + 1} of ${previewFrameCount}`"
             />
-            
+
             <span class="preview-frame-count">
-              {{ renderQueue.isSequencePlayback ? renderQueue.sequencePlaybackFrame + 1 : (currentPreviewJob.renderedFramePaths?.length ?? 0) }} / {{ currentPreviewJob.renderedFramePaths?.length ?? 0 }}
+              <span v-if="previewFrameNumber !== null" class="preview-frame-number">f{{ previewFrameNumber }}</span>
+              {{ previewFrameIndex + 1 }} / {{ previewFrameCount }}
             </span>
             
             <span class="preview-fps">
@@ -340,9 +532,20 @@
           v-if="!previewCollapsed"
           class="resize-handle resize-handle--vertical"
           :class="{ 'resize-handle--dragging': isVerticalResizing, 'resize-handle--collapsed-top': previewMinimized, 'resize-handle--collapsed-bottom': monitorMinimized }"
+          role="separator"
+          tabindex="0"
+          aria-orientation="horizontal"
+          aria-label="Resize preview and system monitor"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-valuenow="verticalSplitValue"
+          :aria-valuetext="`Preview ${verticalSplitValue}% of the height`"
+          title="Drag to resize · double-click to reset · Enter to hide or show the preview"
           @mousedown="startVerticalResize"
+          @dblclick="resetVerticalLayout"
+          @keydown="handleVerticalSplitterKey"
         >
-          <div class="resize-handle__grip">
+          <div class="resize-handle__grip" aria-hidden="true">
             <svg width="20" height="6" viewBox="0 0 20 6" fill="currentColor">
               <circle cx="4" cy="1" r="1"/>
               <circle cx="10" cy="1" r="1"/>
@@ -352,30 +555,58 @@
               <circle cx="16" cy="5" r="1"/>
             </svg>
           </div>
-          <div v-if="previewMinimized" class="resize-handle__label resize-handle__label--top">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/>
-            </svg>
-          </div>
-          <div v-if="monitorMinimized" class="resize-handle__label resize-handle__label--bottom">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <button
+            v-if="previewMinimized"
+            class="resize-handle__label resize-handle__label--top"
+            title="Show preview"
+            aria-label="Show preview"
+            tabindex="-1"
+            @mousedown.stop
+            @dblclick.stop
+            @click.stop="previewMinimized = false"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
             </svg>
-          </div>
+          </button>
+          <button
+            v-if="monitorMinimized"
+            class="resize-handle__label resize-handle__label--bottom"
+            title="Show system monitor"
+            aria-label="Show system monitor"
+            tabindex="-1"
+            @mousedown.stop
+            @dblclick.stop
+            @click.stop="monitorMinimized = false"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/>
+            </svg>
+          </button>
         </div>
 
         <!-- System Monitor -->
-        <div class="monitor-section" v-if="!previewCollapsed" :class="{ 'monitor-section--minimized': monitorMinimized }">
+        <div
+          ref="monitorSectionRef"
+          class="monitor-section"
+          v-if="!previewCollapsed"
+          :class="{ 'monitor-section--minimized': monitorMinimized }"
+          :style="monitorSectionStyle"
+        >
           <div class="panel__header">
             <h2>System Monitor</h2>
-            <div class="monitor-tabs">
-              <button class="btn btn--ghost btn--sm" :class="{ 'btn--active': monitorTab === 'Bars' }" @click="monitorTab = 'Bars'">Bars</button>
-              <button class="btn btn--ghost btn--sm" :class="{ 'btn--active': monitorTab === 'Graph' }" @click="monitorTab = 'Graph'">Graph</button>
-              <button class="btn btn--ghost btn--sm" :class="{ 'btn--active': monitorTab === 'Processes' }" @click="monitorTab = 'Processes'">Processes</button>
-              <button class="btn btn--ghost btn--sm" :class="{ 'btn--active': monitorTab === 'Log' }" @click="monitorTab = 'Log'">Log</button>
+            <div class="monitor-tabs" role="group" aria-label="System monitor view">
+              <button
+                v-for="tab in MONITOR_TABS"
+                :key="tab"
+                class="btn btn--ghost btn--sm"
+                :class="{ 'btn--active': monitorTab === tab }"
+                :aria-pressed="monitorTab === tab"
+                @click="monitorTab = tab"
+              >{{ tab }}</button>
             </div>
             <div class="monitor-controls" v-if="monitorTab === 'Bars' || monitorTab === 'Graph'">
-              <select v-if="monitorTab === 'Graph'" class="form-select form-select--sm" v-model="graphDuration">
+              <select v-if="monitorTab === 'Graph'" class="form-select form-select--sm" v-model="graphDuration" aria-label="Graph time span">
                 <option :value="30">30 sec</option>
                 <option :value="60">1 min</option>
                 <option :value="300">5 min</option>
@@ -383,13 +614,23 @@
                 <option :value="1800">30 min</option>
                 <option :value="3600">1 hour</option>
               </select>
-              <select v-if="monitorTab === 'Bars'" class="form-select form-select--sm" :value="String(systemMonitor.updateInterval)" @change="handleMonitorIntervalChange">
+              <select v-if="monitorTab === 'Bars'" class="form-select form-select--sm" :value="String(systemMonitor.updateInterval)" @change="handleMonitorIntervalChange" aria-label="Update interval">
                 <option value="250">250ms</option>
                 <option value="500">500ms</option>
                 <option value="1000">1s</option>
                 <option value="2000">2s</option>
               </select>
             </div>
+            <button
+              class="btn btn--ghost btn--sm monitor-minimize"
+              @click="minimizeMonitor"
+              title="Hide system monitor"
+              aria-label="Hide system monitor"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+              </svg>
+            </button>
           </div>
 
           <!-- Bars -->
@@ -397,25 +638,25 @@
             <div class="monitor-bars__item">
               <SystemMonitorGauge label="CPU" :value="systemMonitor.cpuUsage" :max="100" unit="%" :subtitle="`${systemMonitor.cpuModel} @ ${systemMonitor.cpuSpeed}GHz | ${systemMonitor.cpuCores}C/${systemMonitor.cpuThreads}T`" color="#4589ff" />
               <svg v-if="showMiniGraphs" class="monitor-mini-graph" viewBox="0 0 100 20" preserveAspectRatio="none">
-                <polyline :points="miniGraphPoints(systemMonitor.history.cpu)" fill="none" stroke="#4589ff" stroke-width="1" />
+                <polyline :points="miniGraphPoints(systemMonitor.history.cpu)" fill="none" stroke="#4589ff" stroke-width="1.5" vector-effect="non-scaling-stroke" />
               </svg>
             </div>
             <div class="monitor-bars__item">
               <SystemMonitorGauge label="RAM" :value="systemMonitor.memoryUsage" :max="100" unit="%" :subtitle="`${systemMonitor.memoryUsedGB.toFixed(1)} / ${systemMonitor.memoryTotalGB.toFixed(1)} GB | ${systemMonitor.memoryType} @ ${systemMonitor.memorySpeed}MHz | ${systemMonitor.memorySlots}/${systemMonitor.memoryTotalSlots} slots`" color="#42be65" />
               <svg v-if="showMiniGraphs" class="monitor-mini-graph" viewBox="0 0 100 20" preserveAspectRatio="none">
-                <polyline :points="miniGraphPoints(systemMonitor.history.memory)" fill="none" stroke="#42be65" stroke-width="1" />
+                <polyline :points="miniGraphPoints(systemMonitor.history.memory)" fill="none" stroke="#42be65" stroke-width="1.5" vector-effect="non-scaling-stroke" />
               </svg>
             </div>
             <div class="monitor-bars__item">
               <SystemMonitorGauge label="GPU" :value="systemMonitor.gpuUsage" :max="100" unit="%" :subtitle="systemMonitor.gpuName" color="#f1c21b" />
               <svg v-if="showMiniGraphs" class="monitor-mini-graph" viewBox="0 0 100 20" preserveAspectRatio="none">
-                <polyline :points="miniGraphPoints(systemMonitor.history.gpu)" fill="none" stroke="#f1c21b" stroke-width="1" />
+                <polyline :points="miniGraphPoints(systemMonitor.history.gpu)" fill="none" stroke="#f1c21b" stroke-width="1.5" vector-effect="non-scaling-stroke" />
               </svg>
             </div>
             <div class="monitor-bars__item">
               <SystemMonitorGauge label="VRAM" :value="systemMonitor.gpuVramUsage" :max="100" unit="%" :subtitle="`${systemMonitor.gpuVramUsedMB.toFixed(0)} / ${systemMonitor.gpuVramTotalMB.toFixed(0)} MB`" color="#ff832b" />
               <svg v-if="showMiniGraphs" class="monitor-mini-graph" viewBox="0 0 100 20" preserveAspectRatio="none">
-                <polyline :points="miniGraphPoints(systemMonitor.history.gpuVram)" fill="none" stroke="#ff832b" stroke-width="1" />
+                <polyline :points="miniGraphPoints(systemMonitor.history.gpuVram)" fill="none" stroke="#ff832b" stroke-width="1.5" vector-effect="non-scaling-stroke" />
               </svg>
             </div>
           </div>
@@ -460,7 +701,13 @@
                 :key="p.id" 
                 :class="{ 'process-row--selected': selectedProcessId === p.id }" 
                 :style="{ borderLeftColor: getProcessColor(p.name) }"
+                role="button"
+                tabindex="0"
+                :aria-pressed="selectedProcessId === p.id"
+                :aria-label="`${p.name}, ${p.status}: show output`"
                 @click="selectProcess(p.id)"
+                @keydown.enter.self.prevent="selectProcess(p.id)"
+                @keydown.space.self.prevent="selectProcess(p.id)"
               >
                 <div class="process-row__indicator" :style="{ background: getProcessColor(p.name) }" />
                 <div class="process-row__main">
@@ -486,9 +733,16 @@
       </section>
     </main>
 
+    <!-- Screen reader announcements (render started / finished / failed) -->
+    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ politeAnnouncement }}</div>
+    <div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true">{{ urgentAnnouncement }}</div>
+
+    <!-- Keyboard shortcuts -->
+    <ShortcutsModal v-if="showShortcuts" @close="showShortcuts = false" />
+
     <!-- Settings Modal -->
-    <SettingsModal 
-      v-if="showSettings" 
+    <SettingsModal
+      v-if="showSettings"
       @close="showSettings = false"
     />
     
@@ -506,7 +760,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { useRenderQueueStore, type RenderJob } from '~/stores/renderQueue';
+import { useRenderQueueStore, type RenderJob, type JobMenuAction } from '~/stores/renderQueue';
 import { useSystemMonitorStore } from '~/stores/systemMonitor';
 import { useSettingsStore } from '~/stores/settings';
 import { ApplicationType, APPLICATION_FILE_EXTENSIONS, getAppTypeFromExtension, APPLICATION_INFO } from '~/types/applications';
@@ -519,15 +773,18 @@ const systemMonitor = useSystemMonitorStore();
 const settings = useSettingsStore();
 
 // App version from package.json (fetched via Electron)
-const appVersion = ref('2.2.0');
+const appVersion = ref('2.5.0');
 
 const showSettings = ref(false);
 const overwriteWarning = ref<{ job: RenderJob; existingFrames: any[] } | null>(null);
 const isDragOver = ref(false);
 
-// Resizable panel state
-const previewPanelWidth = ref(400);
+// Resizable panel state. Sizes are fractions of the space the panels share (as flex-grow
+// factors), so every panel keeps its proportion when the window is resized.
+const RESIZE_HANDLE_SIZE = 12;
+const queueRatio = ref(1 / 3); // queue width / (main width - handle)
 const isResizing = ref(false);
+const layoutSettling = ref(true); // no transitions until the default layout is measured
 const previewCollapsed = ref(false);
 const queueCollapsed = ref(false);
 const MIN_PANEL_WIDTH = 300;
@@ -546,13 +803,156 @@ const videoPlayerRef = ref<HTMLVideoElement | null>(null);
 let sequencePlaybackInterval: number | null = null;
 
 // Vertical resize state (preview vs monitor)
-const previewPaneHeight = ref(300);
+const previewRatio = ref(0.6); // preview height / (info panel height - handle); fitted to the monitor bars on mount
 const isVerticalResizing = ref(false);
 const MIN_PREVIEW_HEIGHT = 120;
 const MIN_MONITOR_HEIGHT = 100;
 const VERTICAL_SNAP_THRESHOLD = 80;
 const previewMinimized = ref(false);
 const monitorMinimized = ref(false);
+
+// flex-grow factors below 1 in total would leave space unused, so a panel that is alone takes all of it
+function flexFor(ratio: number, collapsed: boolean, otherCollapsed: boolean) {
+  if (collapsed) return { flex: '0 0 0px' };
+  return { flex: otherCollapsed ? '1 1 0px' : `${ratio} 1 0px` };
+}
+const queuePanelStyle = computed(() => flexFor(queueRatio.value, queueCollapsed.value, previewCollapsed.value));
+const infoPanelStyle = computed(() => flexFor(1 - queueRatio.value, previewCollapsed.value, queueCollapsed.value));
+const previewSectionStyle = computed(() => flexFor(previewRatio.value, previewMinimized.value, monitorMinimized.value));
+const monitorSectionStyle = computed(() => flexFor(1 - previewRatio.value, monitorMinimized.value, previewMinimized.value));
+
+// Height the monitor needs to show its four bars (header + gauges, without the sparklines).
+// Measured from the Bars view; the last measurement is kept for when another tab is open.
+const barsFitHeight = ref(0);
+const FALLBACK_BARS_FIT_HEIGHT = 365;
+
+function measureBarsFitHeight(): number {
+  const header = document.querySelector('.monitor-section > .panel__header') as HTMLElement | null;
+  const bars = document.querySelector('.monitor-bars') as HTMLElement | null;
+  const gauges = Array.from(document.querySelectorAll<HTMLElement>('.monitor-bars__item > .gauge'));
+  if (!header || !bars || gauges.length === 0) return barsFitHeight.value;
+  const style = getComputedStyle(bars);
+  const gap = parseFloat(style.rowGap) || 0;
+  const content = gauges.reduce((sum, g) => sum + g.getBoundingClientRect().height, 0) + gap * (gauges.length - 1);
+  barsFitHeight.value = Math.ceil(header.offsetHeight + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + content) + 2;
+  return barsFitHeight.value;
+}
+
+// Default split of the right panel: the monitor gets just the height its four bars need
+function fitMonitorToBars() {
+  const panel = document.querySelector('.panel--info') as HTMLElement | null;
+  if (!panel) return;
+  const available = panel.clientHeight - RESIZE_HANDLE_SIZE;
+  if (available <= 0) return;
+  const monitorHeight = Math.max(MIN_MONITOR_HEIGHT, measureBarsFitHeight() || FALLBACK_BARS_FIT_HEIGHT);
+  const previewHeight = Math.max(MIN_PREVIEW_HEIGHT, available - monitorHeight);
+  previewRatio.value = Math.min(1, previewHeight / available);
+}
+
+const DEFAULT_QUEUE_RATIO = 1 / 3;
+
+function resetHorizontalLayout() {
+  queueCollapsed.value = false;
+  previewCollapsed.value = false;
+  queueRatio.value = DEFAULT_QUEUE_RATIO;
+}
+
+async function resetVerticalLayout() {
+  previewMinimized.value = false;
+  monitorMinimized.value = false;
+  await nextTick();
+  fitMonitorToBars();
+}
+
+// Collapse buttons in the panel headers (the splitter tabs bring the panels back)
+function collapseQueue() {
+  previewCollapsed.value = false;
+  queueCollapsed.value = true;
+}
+function collapseInfoPanel() {
+  queueCollapsed.value = false;
+  previewCollapsed.value = true;
+}
+function minimizePreview() {
+  monitorMinimized.value = false;
+  previewMinimized.value = true;
+}
+function minimizeMonitor() {
+  previewMinimized.value = false;
+  monitorMinimized.value = true;
+}
+
+// Splitter positions for assistive technology (percent of the space taken by the first panel)
+const horizontalSplitValue = computed(() =>
+  queueCollapsed.value ? 0 : previewCollapsed.value ? 100 : Math.round(queueRatio.value * 100));
+const verticalSplitValue = computed(() =>
+  previewMinimized.value ? 0 : monitorMinimized.value ? 100 : Math.round(previewRatio.value * 100));
+
+// Keyboard resizing: arrows move the splitter (Shift: bigger steps), Home/End go to the
+// minimum/maximum, Enter hides or shows the first panel (window-splitter pattern).
+function splitterStep(e: KeyboardEvent) {
+  return e.shiftKey ? 0.1 : 0.02;
+}
+
+function handleHorizontalSplitterKey(e: KeyboardEvent) {
+  const mainEl = document.querySelector('.main') as HTMLElement | null;
+  const available = (mainEl?.clientWidth ?? 0) - RESIZE_HANDLE_SIZE;
+  if (available <= 0) return;
+  const min = Math.min(0.5, MIN_PANEL_WIDTH / available);
+  const setRatio = (r: number) => {
+    queueCollapsed.value = false;
+    previewCollapsed.value = false;
+    queueRatio.value = Math.min(1 - min, Math.max(min, r));
+  };
+  switch (e.key) {
+    case 'ArrowLeft': setRatio((queueCollapsed.value ? min : queueRatio.value) - splitterStep(e)); break;
+    case 'ArrowRight': setRatio((previewCollapsed.value ? 1 - min : queueRatio.value) + splitterStep(e)); break;
+    case 'Home': setRatio(min); break;
+    case 'End': setRatio(1 - min); break;
+    case 'Enter':
+      if (queueCollapsed.value || previewCollapsed.value) resetCollapsedPanels();
+      else collapseQueue();
+      break;
+    default: return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function resetCollapsedPanels() {
+  queueCollapsed.value = false;
+  previewCollapsed.value = false;
+}
+
+function handleVerticalSplitterKey(e: KeyboardEvent) {
+  const panel = document.querySelector('.panel--info') as HTMLElement | null;
+  const available = (panel?.clientHeight ?? 0) - RESIZE_HANDLE_SIZE;
+  if (available <= 0) return;
+  const minTop = Math.min(0.5, MIN_PREVIEW_HEIGHT / available);
+  const minBottom = Math.min(0.5, MIN_MONITOR_HEIGHT / available);
+  const setRatio = (r: number) => {
+    previewMinimized.value = false;
+    monitorMinimized.value = false;
+    previewRatio.value = Math.min(1 - minBottom, Math.max(minTop, r));
+  };
+  switch (e.key) {
+    case 'ArrowUp': setRatio((previewMinimized.value ? minTop : previewRatio.value) - splitterStep(e)); break;
+    case 'ArrowDown': setRatio((monitorMinimized.value ? 1 - minBottom : previewRatio.value) + splitterStep(e)); break;
+    case 'Home': setRatio(minTop); break;
+    case 'End': setRatio(1 - minBottom); break;
+    case 'Enter':
+      if (previewMinimized.value || monitorMinimized.value) {
+        previewMinimized.value = false;
+        monitorMinimized.value = false;
+      } else {
+        minimizePreview();
+      }
+      break;
+    default: return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}
 
 // Unsupported preview state
 const previewUnsupportedPath = ref<string | null>(null);
@@ -585,22 +985,18 @@ function startVerticalResize(event: MouseEvent) {
   document.body.style.cursor = 'row-resize';
   document.body.style.userSelect = 'none';
   
-  const startY = event.clientY;
-  const startHeight = previewPaneHeight.value;
-  const panel = document.querySelector('.panel--info') as HTMLElement;
-  const panelRect = panel?.getBoundingClientRect();
-  const totalHeight = panelRect ? panelRect.height - 50 : 600; // Subtract header/padding
+  const panel = document.querySelector('.panel--info') as HTMLElement | null;
+  if (!panel) return;
   
   const onMouseMove = (e: MouseEvent) => {
-    const deltaY = e.clientY - startY;
-    let newHeight = startHeight + deltaY;
-    
-    // Calculate monitor height based on preview height
-    const monitorHeight = totalHeight - newHeight - 12; // 12 = resize handle height
+    const panelRect = panel.getBoundingClientRect();
+    const available = panelRect.height - RESIZE_HANDLE_SIZE;
+    if (available <= 0) return;
+    const newHeight = e.clientY - panelRect.top - RESIZE_HANDLE_SIZE / 2;
+    const monitorHeight = available - newHeight;
     
     // Snap to minimize preview (drag up to top)
     if (newHeight < VERTICAL_SNAP_THRESHOLD) {
-      previewPaneHeight.value = 0;
       previewMinimized.value = true;
       monitorMinimized.value = false;
       return;
@@ -608,7 +1004,6 @@ function startVerticalResize(event: MouseEvent) {
     
     // Snap to minimize monitor (drag down to bottom)
     if (monitorHeight < VERTICAL_SNAP_THRESHOLD) {
-      previewPaneHeight.value = totalHeight - 12;
       previewMinimized.value = false;
       monitorMinimized.value = true;
       return;
@@ -617,7 +1012,8 @@ function startVerticalResize(event: MouseEvent) {
     // Normal resize within bounds
     previewMinimized.value = false;
     monitorMinimized.value = false;
-    previewPaneHeight.value = Math.max(MIN_PREVIEW_HEIGHT, Math.min(totalHeight - MIN_MONITOR_HEIGHT - 12, newHeight));
+    const clamped = Math.max(MIN_PREVIEW_HEIGHT, Math.min(available - MIN_MONITOR_HEIGHT, newHeight));
+    previewRatio.value = Math.min(1, Math.max(0, clamped / available));
   };
   
   const onMouseUp = () => {
@@ -650,7 +1046,9 @@ type SpawnedProcessEntry = {
   logTail?: string;
 };
 
-const monitorTab = ref<'Bars' | 'Graph' | 'Processes' | 'Log'>('Bars');
+const MONITOR_TABS = ['Bars', 'Graph', 'Processes', 'Log'] as const;
+type MonitorTab = typeof MONITOR_TABS[number];
+const monitorTab = ref<MonitorTab>('Bars');
 
 const spawnedProcessList = ref<SpawnedProcessEntry[]>([]);
 const selectedProcessId = ref<string | null>(null);
@@ -777,9 +1175,10 @@ function graphPointsScaled(series: number[]) {
     .join(' ');
 }
 
-// Mini graph points for bars section (viewBox 0 0 100 20)
+// Mini graph points for bars section (viewBox 0 0 100 20): the last MINI_GRAPH_POINTS samples
+const MINI_GRAPH_POINTS = 60;
 function miniGraphPoints(series: number[]) {
-  const data = Array.isArray(series) ? series : [];
+  const data = Array.isArray(series) ? series.slice(-MINI_GRAPH_POINTS) : [];
   const n = data.length;
   if (n === 0) return '';
   if (n === 1) {
@@ -797,13 +1196,24 @@ function miniGraphPoints(series: number[]) {
     .join(' ');
 }
 
-// Determine if mini graphs should be shown based on available height
+// Sparklines under the bars appear once the monitor is tall enough to show them without scrolling
+// (each adds a 28px graph plus the 4px gap above it)
+const MINI_GRAPH_EXTRA_HEIGHT = 4 * (28 + 4);
 const monitorSectionRef = ref<HTMLElement | null>(null);
 const monitorSectionHeight = ref(0);
-const showMiniGraphs = computed(() => monitorSectionHeight.value > 220);
+const showMiniGraphs = computed(() => barsFitHeight.value > 0
+  && monitorSectionHeight.value >= barsFitHeight.value + MINI_GRAPH_EXTRA_HEIGHT);
 
-// ResizeObserver for mini-graphs height tracking
+// ResizeObserver for mini-graphs height tracking (the monitor section is re-created when its panel reopens)
 let monitorResizeObserver: ResizeObserver | null = null;
+watch(monitorSectionRef, async (el, old) => {
+  if (old) monitorResizeObserver?.unobserve(old);
+  if (el) {
+    monitorResizeObserver?.observe(el);
+    await nextTick();
+    if (monitorTab.value === 'Bars') measureBarsFitHeight();
+  }
+});
 
 // Canvas graph rendering
 const graphCanvasRef = ref<HTMLCanvasElement | null>(null);
@@ -957,8 +1367,8 @@ const isVideoPreview = computed(() => {
 const previewFileName = computed(() => {
   if (!currentPreviewJob.value) return null;
   const framePaths = currentPreviewJob.value.renderedFramePaths ?? [];
-  if (renderQueue.isSequencePlayback && framePaths.length > 0) {
-    const framePath = framePaths[renderQueue.sequencePlaybackFrame];
+  if ((renderQueue.isSequencePlayback || scrubIndex.value !== null) && framePaths.length > 0) {
+    const framePath = framePaths[previewFrameIndex.value];
     return framePath ? getFileName(framePath) : null;
   }
   return currentPreviewJob.value.lastRenderedFrame ? getFileName(currentPreviewJob.value.lastRenderedFrame) : null;
@@ -986,9 +1396,575 @@ const previewStatusMessage = computed(() => {
   return 'No preview available';
 });
 
+// ============================================================
+// PREVIEW: FRAME STEPPING
+// ============================================================
+
+// Frame picked with the scrubber or ←/→; null follows the newest rendered frame
+const scrubIndex = ref<number | null>(null);
+const previewFrameCount = computed(() => currentPreviewJob.value?.renderedFramePaths?.length ?? 0);
+const previewFrameIndex = computed(() => {
+  if (renderQueue.isSequencePlayback) return renderQueue.sequencePlaybackFrame;
+  const last = Math.max(0, previewFrameCount.value - 1);
+  return scrubIndex.value === null ? last : Math.min(scrubIndex.value, last);
+});
+
+// The scene frame number, from the digits before the file extension (shot_010_1049.png -> 1049)
+const FRAME_NUMBER_RE = /(\d+)(?=\.[^.]+$)/;
+const previewFrameNumber = computed<number | null>(() => {
+  const path = currentPreviewJob.value?.renderedFramePaths?.[previewFrameIndex.value];
+  const match = path ? FRAME_NUMBER_RE.exec(getFileName(path)) : null;
+  return match ? parseInt(match[1], 10) : null;
+});
+
+async function showPreviewFrame(index: number) {
+  const paths = currentPreviewJob.value?.renderedFramePaths ?? [];
+  if (paths.length === 0) return;
+  const i = Math.max(0, Math.min(paths.length - 1, index));
+  scrubIndex.value = i === paths.length - 1 ? null : i;
+  await loadPreviewImage(paths[i]);
+}
+
+function stepPreviewFrame(delta: number) {
+  const from = previewFrameIndex.value;
+  if (renderQueue.isSequencePlayback) stopSequencePlayback({ reload: false });
+  showPreviewFrame(from + delta);
+}
+
+// ============================================================
+// PREVIEW: ZOOM & PAN, FULL VIEW
+// ============================================================
+
+const previewContainerRef = ref<HTMLElement | null>(null);
+const previewContainerSize = ref({ w: 0, h: 0 }); // content box, kept current by the ResizeObserver
+const previewNatural = ref({ w: 0, h: 0 });
+const previewZoom = ref<number | null>(null);     // null: fit to the panel; else screen px per image px
+const previewPan = ref({ x: 0, y: 0 });            // image centre offset from the panel centre (px)
+const isPanningPreview = ref(false);
+const MAX_PREVIEW_ZOOM = 16;
+const previewFullscreen = ref(false);
+const displayedPreviewPath = ref<string | null>(null);
+
+watch(previewContainerRef, (el, old) => {
+  if (old) monitorResizeObserver?.unobserve(old);
+  if (el) monitorResizeObserver?.observe(el);
+});
+
+const canZoomPreview = computed(() => !isVideoPreview.value && !!currentPreviewImage.value && previewEnabled.value);
+
+const previewFitScale = computed(() => {
+  const { w, h } = previewNatural.value;
+  const { w: cw, h: ch } = previewContainerSize.value;
+  if (!w || !h || !cw || !ch) return 1;
+  return Math.min(1, cw / w, ch / h);
+});
+
+const previewZoomPercent = computed(() => Math.round((previewZoom.value ?? previewFitScale.value) * 100));
+
+const previewImageStyle = computed(() => {
+  const z = previewZoom.value;
+  if (z === null) return undefined;
+  const { w, h } = previewNatural.value;
+  const { x, y } = previewPan.value;
+  return {
+    position: 'absolute' as const,
+    left: '50%',
+    top: '50%',
+    width: `${w * z}px`,
+    height: `${h * z}px`,
+    maxWidth: 'none',
+    maxHeight: 'none',
+    borderRadius: '0',
+    transform: `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`,
+    imageRendering: z >= 2 ? ('pixelated' as const) : undefined,
+  };
+});
+
+// Keep some of the image in view
+function clampPreviewPan(pan: { x: number; y: number }, z: number) {
+  const { w, h } = previewNatural.value;
+  const { w: cw, h: ch } = previewContainerSize.value;
+  const maxX = Math.max(0, (w * z - cw) / 2);
+  const maxY = Math.max(0, (h * z - ch) / 2);
+  return { x: Math.max(-maxX, Math.min(maxX, pan.x)), y: Math.max(-maxY, Math.min(maxY, pan.y)) };
+}
+
+function fitPreview() {
+  previewZoom.value = null;
+  previewPan.value = { x: 0, y: 0 };
+}
+
+// Zoom to `next`, keeping the image point under `anchor` (offset from the panel centre) in place
+function setPreviewZoom(next: number, anchor = { x: 0, y: 0 }) {
+  if (!canZoomPreview.value) return;
+  const fit = previewFitScale.value;
+  const current = previewZoom.value ?? fit;
+  const z = Math.max(fit, Math.min(MAX_PREVIEW_ZOOM, next));
+  if (z <= fit && next < current) {
+    fitPreview();
+    return;
+  }
+  const k = z / current;
+  const pan = previewPan.value;
+  previewPan.value = clampPreviewPan({ x: anchor.x - (anchor.x - pan.x) * k, y: anchor.y - (anchor.y - pan.y) * k }, z);
+  previewZoom.value = z;
+}
+
+function zoomPreviewBy(factor: number) {
+  setPreviewZoom((previewZoom.value ?? previewFitScale.value) * factor);
+}
+
+function handlePreviewWheel(e: WheelEvent) {
+  if (!canZoomPreview.value || !previewContainerRef.value) return;
+  e.preventDefault();
+  const rect = previewContainerRef.value.getBoundingClientRect();
+  const anchor = { x: e.clientX - (rect.left + rect.width / 2), y: e.clientY - (rect.top + rect.height / 2) };
+  setPreviewZoom((previewZoom.value ?? previewFitScale.value) * Math.exp(-e.deltaY * 0.0015), anchor);
+}
+
+function startPreviewPan(e: MouseEvent) {
+  if (previewZoom.value === null || e.button !== 0) return;
+  if ((e.target as HTMLElement).closest('button, video')) return;
+  e.preventDefault();
+  const start = { x: e.clientX, y: e.clientY };
+  const startPan = { ...previewPan.value };
+  const onMove = (ev: MouseEvent) => {
+    isPanningPreview.value = true;
+    previewPan.value = clampPreviewPan({ x: startPan.x + ev.clientX - start.x, y: startPan.y + ev.clientY - start.y }, previewZoom.value ?? 1);
+  };
+  const onUp = () => {
+    isPanningPreview.value = false;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+function handlePreviewImgLoad(e: Event) {
+  const img = e.target as HTMLImageElement;
+  const { w, h } = previewNatural.value;
+  if (img.naturalWidth !== w || img.naturalHeight !== h) {
+    previewNatural.value = { w: img.naturalWidth, h: img.naturalHeight };
+    fitPreview(); // a different resolution starts from fit; frames of the same job keep the zoom
+  }
+}
+
+function handlePreviewDoubleClick(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest('video, button')) return;
+  togglePreviewFullscreen();
+}
+
+async function togglePreviewFullscreen() {
+  previewFullscreen.value = !previewFullscreen.value;
+  await nextTick();
+  if (previewFullscreen.value) {
+    document.querySelector<HTMLElement>('.preview-section--fullscreen [aria-pressed]:not(.btn--active)')?.focus();
+  }
+}
+
+// ============================================================
+// QUEUE: SELECTION & JOB ACTIONS
+// ============================================================
+
+const expandedJobIds = ref(new Set<string>());
+let selectionAnchorId: string | null = null; // where Shift-click / Shift+arrow ranges start
+
+function toggleJobExpanded(jobId: string) {
+  if (expandedJobIds.value.has(jobId)) expandedJobIds.value.delete(jobId);
+  else expandedJobIds.value.add(jobId);
+}
+
+function handleJobSelect(jobId: string, modifiers: { ctrl: boolean; shift: boolean; context?: boolean } = { ctrl: false, shift: false }) {
+  const ids = renderQueue.selectedJobIds;
+
+  // Right-click keeps a selection that includes the job, so the menu acts on all of it
+  if (modifiers.context) {
+    if (!ids.includes(jobId)) {
+      renderQueue.selectJob(jobId);
+      selectionAnchorId = jobId;
+    }
+    return;
+  }
+
+  if (modifiers.shift) {
+    const order = renderQueue.jobs.map(j => j.id);
+    const anchor = selectionAnchorId && order.includes(selectionAnchorId) ? selectionAnchorId : renderQueue.selectedJobId ?? jobId;
+    const [from, to] = [order.indexOf(anchor), order.indexOf(jobId)].sort((a, b) => a - b);
+    const range = order.slice(from, to + 1);
+    renderQueue.setSelection(modifiers.ctrl ? [...new Set([...ids, ...range])] : range, jobId);
+    return;
+  }
+
+  if (modifiers.ctrl) {
+    if (ids.includes(jobId)) {
+      const primary = renderQueue.selectedJobId === jobId ? undefined : renderQueue.selectedJobId;
+      renderQueue.setSelection(ids.filter(id => id !== jobId), primary);
+    } else {
+      renderQueue.setSelection([...ids, jobId], jobId);
+    }
+    selectionAnchorId = jobId;
+    return;
+  }
+
+  // Plain click: select only this job, or deselect it when it is the only one selected
+  if (ids.length === 1 && ids[0] === jobId) {
+    renderQueue.selectJob(null);
+  } else {
+    renderQueue.selectJob(jobId);
+  }
+  selectionAnchorId = jobId;
+}
+
+function selectAllJobs() {
+  if (renderQueue.jobs.length === 0) return;
+  renderQueue.setSelection(renderQueue.jobs.map(j => j.id), renderQueue.selectedJobId ?? renderQueue.jobs[0].id);
+}
+
+function focusJob(jobId: string) {
+  nextTick(() => {
+    const el = document.querySelector<HTMLElement>(`[data-job-id="${CSS.escape(jobId)}"]`);
+    el?.focus();
+    el?.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+// ↑/↓ (and Home/End) move the selection; with Shift they extend it
+function moveSelectionTo(index: number, extend: boolean) {
+  const jobs = renderQueue.jobs;
+  if (jobs.length === 0) return;
+  const id = jobs[Math.max(0, Math.min(jobs.length - 1, index))].id;
+  if (extend) {
+    handleJobSelect(id, { ctrl: false, shift: true });
+  } else {
+    renderQueue.selectJob(id);
+    selectionAnchorId = id;
+  }
+  focusJob(id);
+}
+
+function moveSelectionBy(delta: number, extend: boolean) {
+  const jobs = renderQueue.jobs;
+  const current = renderQueue.selectedJobId ? jobs.findIndex(j => j.id === renderQueue.selectedJobId) : -1;
+  moveSelectionTo(current === -1 ? (delta > 0 ? 0 : jobs.length - 1) : current + delta, extend);
+}
+
+function targetJobIds(jobId: string) {
+  const ids = renderQueue.selectedJobIds;
+  return ids.length > 1 && ids.includes(jobId) ? [...ids] : [jobId];
+}
+
+// Remove jobs, then select (and focus) the job that took the first one's place
+function removeJobsAndRefocus(ids: string[]) {
+  const first = renderQueue.jobs.findIndex(j => ids.includes(j.id));
+  renderQueue.removeJobs(ids);
+  const next = renderQueue.jobs[Math.min(first, renderQueue.jobs.length - 1)];
+  if (first !== -1 && next && renderQueue.selectedJobIds.length === 0) {
+    renderQueue.selectJob(next.id);
+    selectionAnchorId = next.id;
+    focusJob(next.id);
+  }
+}
+
+function removeSelectedJobs() {
+  removeJobsAndRefocus([...renderQueue.selectedJobIds]);
+}
+
+function handleJobAction(jobId: string, action: JobMenuAction) {
+  switch (action) {
+    case 'duplicate': {
+      const copyId = renderQueue.duplicateJob(jobId);
+      if (copyId) {
+        renderQueue.selectJob(copyId);
+        selectionAnchorId = copyId;
+        focusJob(copyId);
+      }
+      break;
+    }
+    case 'moveTop':
+    case 'moveBottom':
+      renderQueue.moveJobsToEdge(targetJobIds(jobId), action === 'moveTop' ? 'top' : 'bottom');
+      focusJob(jobId);
+      break;
+    case 'reset':
+      renderQueue.resetJobs(targetJobIds(jobId));
+      break;
+    case 'remove':
+      removeJobsAndRefocus(targetJobIds(jobId));
+      break;
+  }
+}
+
+// ============================================================
+// QUEUE SUMMARY (header, while not rendering)
+// ============================================================
+
+function jobFrameCount(job: RenderJob) {
+  return new Set(parseFrameRanges(job.useCustomFrameRange ? job.frameRanges : `${job.originalFrameStart}-${job.originalFrameEnd}`)).size;
+}
+
+const queueSummary = computed(() => {
+  const jobs = renderQueue.jobs;
+  if (jobs.length === 0) return [];
+  const count = (status: RenderJob['status'][]) => jobs.filter(j => status.includes(j.status)).length;
+  const items = [{ key: 'total', text: `${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}` }];
+  const pending = count(['idle']);
+  const paused = count(['paused']);
+  const complete = count(['complete']);
+  const problems = count(['error', 'missing-app']);
+  if (pending) items.push({ key: 'pending', text: `${pending} pending` });
+  if (paused) items.push({ key: 'paused', text: `${paused} paused` });
+  if (complete) items.push({ key: 'complete', text: `${complete} complete` });
+  if (problems) items.push({ key: 'error', text: `${problems} ${problems === 1 ? 'needs' : 'need'} attention` });
+  const frames = jobs.filter(j => j.status === 'idle').reduce((n, j) => n + jobFrameCount(j), 0);
+  if (frames) items.push({ key: 'frames', text: `${frames.toLocaleString()} ${frames === 1 ? 'frame' : 'frames'} to render` });
+  return items;
+});
+
+// ============================================================
+// SCREEN READER ANNOUNCEMENTS
+// ============================================================
+
+const politeAnnouncement = ref('');
+const urgentAnnouncement = ref('');
+
+function announce(message: string, urgent = false) {
+  const target = urgent ? urgentAnnouncement : politeAnnouncement;
+  target.value = '';
+  nextTick(() => { target.value = message; }); // re-set so a repeated message is read again
+}
+
+// ============================================================
+// LAYOUT PERSISTENCE
+// ============================================================
+
+const LAYOUT_STORAGE_KEY = 'renderq.layout.v1';
+const GRAPH_DURATIONS = [30, 60, 300, 600, 1800, 3600];
+
+function loadSavedLayout(): boolean {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    const isRatio = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 1;
+    if (!isRatio(saved.queueRatio) || !isRatio(saved.previewRatio)) return false;
+    queueRatio.value = saved.queueRatio;
+    previewRatio.value = saved.previewRatio;
+    queueCollapsed.value = saved.queueCollapsed === true;
+    previewCollapsed.value = saved.previewCollapsed === true && !queueCollapsed.value;
+    previewMinimized.value = saved.previewMinimized === true;
+    monitorMinimized.value = saved.monitorMinimized === true && !previewMinimized.value;
+    if (MONITOR_TABS.includes(saved.monitorTab)) monitorTab.value = saved.monitorTab;
+    if (GRAPH_DURATIONS.includes(saved.graphDuration)) graphDuration.value = saved.graphDuration;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const restoredLayout = loadSavedLayout();
+
+let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function saveLayoutNow() {
+  if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = null;
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
+      queueRatio: queueRatio.value,
+      previewRatio: previewRatio.value,
+      queueCollapsed: queueCollapsed.value,
+      previewCollapsed: previewCollapsed.value,
+      previewMinimized: previewMinimized.value,
+      monitorMinimized: monitorMinimized.value,
+      monitorTab: monitorTab.value,
+      graphDuration: graphDuration.value,
+    }));
+  } catch {
+    // storage unavailable: the layout just isn't remembered
+  }
+}
+
+watch(
+  [queueRatio, previewRatio, queueCollapsed, previewCollapsed, previewMinimized, monitorMinimized, monitorTab, graphDuration],
+  () => {
+    if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+    layoutSaveTimer = setTimeout(saveLayoutNow, 400);
+  },
+);
+
+// The bars are measured whenever they are on screen (the sparklines depend on their height)
+watch(monitorTab, async (tab) => {
+  if (tab !== 'Bars') return;
+  await nextTick();
+  measureBarsFitHeight();
+});
+
+// ============================================================
+// KEYBOARD SHORTCUTS
+// ============================================================
+
+const showShortcuts = ref(false);
+
+// Keys typed into fields belong to the field
+function isTypingTarget(target: EventTarget | null) {
+  const el = target as HTMLElement | null;
+  return !!el?.closest?.('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable=""], [contenteditable="true"]');
+}
+
+// Space / Enter activate a focused control themselves
+function isControlTarget(target: EventTarget | null) {
+  const el = target as HTMLElement | null;
+  return !!el?.closest?.('button, a[href], input, select, textarea, summary, video, audio, [role="button"], [role="menuitem"], [role="separator"]');
+}
+
+// List navigation keys only when focus is on the page itself or in the queue (other panels scroll with them)
+function isQueueNavigationTarget(target: EventTarget | null) {
+  if (!(target instanceof Element) || target === document.body || target === document.documentElement) return true;
+  return !!target.closest('.panel--queue');
+}
+
+function toggleRendering() {
+  if (!renderQueue.isRendering) {
+    if (renderQueue.pendingJobs.length > 0) startRendering();
+  } else if (renderQueue.isPaused) {
+    resumeRendering();
+  } else {
+    pauseRendering();
+  }
+}
+
+function handleGlobalKeydown(e: KeyboardEvent) {
+  if (e.defaultPrevented || e.isComposing) return;
+  // Open dialogs handle their own keys
+  if (showSettings.value || overwriteWarning.value || showShortcuts.value) return;
+
+  const ctrl = e.ctrlKey || e.metaKey;
+  const typing = isTypingTarget(e.target);
+  const onControl = isControlTarget(e.target);
+  // A job card that has keyboard focus is what the keys act on: select it first
+  const focusedCard = (e.target as HTMLElement | null)?.matches?.('[data-job-id]')
+    ? (e.target as HTMLElement).dataset.jobId ?? null
+    : null;
+  const JOB_KEYS = ['Delete', 'Backspace', 'Enter', 'ArrowUp', 'ArrowDown', 'd', 'D'];
+  if (focusedCard && JOB_KEYS.includes(e.key) && !renderQueue.selectedJobIds.includes(focusedCard)) {
+    renderQueue.selectJob(focusedCard);
+    selectionAnchorId = focusedCard;
+  }
+  const selected = renderQueue.selectedJobIds;
+
+  if (e.key === 'Escape') {
+    if (previewFullscreen.value) {
+      togglePreviewFullscreen();
+      e.preventDefault();
+    } else if (!typing && selected.length > 0) {
+      renderQueue.selectJob(null);
+      e.preventDefault();
+    }
+    return;
+  }
+  if (typing) return;
+
+  if (e.key === 'F1' || e.key === '?') {
+    showShortcuts.value = true;
+    e.preventDefault();
+    return;
+  }
+
+  if (ctrl) {
+    if (e.altKey || e.shiftKey) return;
+    const key = e.key.toLowerCase();
+    if (key === 'i') {
+      addBlendFiles();
+    } else if (key === 'a') {
+      selectAllJobs();
+      // the Edit menu's Select All may also select the page text
+      setTimeout(() => window.getSelection()?.removeAllRanges(), 0);
+    } else if (key === 'd') {
+      const job = renderQueue.jobs.find(j => j.id === renderQueue.selectedJobId);
+      if (!job || job.status === 'loading') return;
+      handleJobAction(job.id, 'duplicate');
+    } else {
+      return;
+    }
+    e.preventDefault();
+    return;
+  }
+
+  if (e.altKey) {
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && selected.length > 0) {
+      renderQueue.moveJobsBy([...selected], e.key === 'ArrowUp' ? -1 : 1);
+      if (renderQueue.selectedJobId) focusJob(renderQueue.selectedJobId);
+      e.preventDefault();
+    }
+    return;
+  }
+
+  switch (e.key) {
+    case ' ':
+      if (onControl) return;
+      toggleRendering();
+      break;
+    case 'Delete':
+    case 'Backspace':
+      if (selected.length === 0 || !isQueueNavigationTarget(e.target) || (onControl && !focusedCard)) return;
+      removeSelectedJobs();
+      break;
+    case 'ArrowUp':
+    case 'ArrowDown':
+      if (!isQueueNavigationTarget(e.target)) return;
+      moveSelectionBy(e.key === 'ArrowUp' ? -1 : 1, e.shiftKey);
+      break;
+    case 'Home':
+    case 'End':
+      if (!isQueueNavigationTarget(e.target) || onControl) return;
+      moveSelectionTo(e.key === 'Home' ? 0 : renderQueue.jobs.length - 1, e.shiftKey);
+      break;
+    case 'Enter':
+      if (onControl || !renderQueue.selectedJobId) return;
+      toggleJobExpanded(renderQueue.selectedJobId);
+      break;
+    case 'ArrowLeft':
+    case 'ArrowRight':
+      if (isVideoPreview.value || previewFrameCount.value < 2) return;
+      stepPreviewFrame(e.key === 'ArrowLeft' ? -1 : 1);
+      break;
+    case 'f':
+    case 'F':
+      togglePreviewFullscreen();
+      break;
+    case '0':
+      if (!canZoomPreview.value) return;
+      fitPreview();
+      break;
+    case '1':
+      setPreviewZoom(1);
+      break;
+    case '+':
+    case '=':
+      zoomPreviewBy(1.25);
+      break;
+    case '-':
+      zoomPreviewBy(0.8);
+      break;
+    default:
+      return;
+  }
+  e.preventDefault();
+}
+
+// The previewed job can change without a selection change (the next job starts rendering)
+watch(() => renderQueue.previewJob?.id, (id, oldId) => {
+  if (id === oldId) return;
+  scrubIndex.value = null;
+  fitPreview();
+});
+
 // Watch for job selection changes
 watch(() => renderQueue.selectedJobId, async (newId) => {
-  stopSequencePlayback();
+  stopSequencePlayback({ reload: false });
+  scrubIndex.value = null;
+  fitPreview();
   if (newId) {
     await loadPreviewForJob(newId);
   } else {
@@ -1001,8 +1977,8 @@ watch(() => renderQueue.selectedJobId, async (newId) => {
 
 // Watch for new rendered frames on currently selected job (Nuke jobs: the frame's preview JPEG, not its EXR)
 watch(() => renderQueue.previewJob?.lastPreviewPath || renderQueue.previewJob?.lastRenderedFrame, async (newFrame) => {
-  if (!renderQueue.isSequencePlayback && newFrame && currentPreviewJob.value && previewEnabled.value) {
-    // Only auto-update if viewing the job that's rendering
+  if (!renderQueue.isSequencePlayback && scrubIndex.value === null && newFrame && currentPreviewJob.value && previewEnabled.value) {
+    // Only auto-update if viewing the job that's rendering (and not looking at an earlier frame)
     if (!renderQueue.selectedJobId || renderQueue.selectedJobId === renderQueue.currentJob?.id) {
       await loadPreviewImage(newFrame);
     }
@@ -1081,13 +2057,18 @@ async function loadPreviewForJob(jobId: string) {
   }
 }
 
+// Loads can finish out of order (stepping quickly through EXRs): only the latest request is shown
+let previewLoadToken = 0;
+
 async function loadPreviewImage(imagePath: string) {
   if (!imagePath) return;
   const api = (window as any).electronAPI;
-  
+  const token = ++previewLoadToken;
+
   // Reset unsupported state when loading a new image
   previewUnsupportedPath.value = null;
-  
+  displayedPreviewPath.value = imagePath;
+
   // Route all EXR previews through readExrLayer so multipart Blender EXRs work on Windows.
   if (imagePath.toLowerCase().endsWith('.exr')) {
     const desiredLayer = renderQueue.selectedExrLayer || 'Combined';
@@ -1096,6 +2077,7 @@ async function loadPreviewImage(imagePath: string) {
       exrPath: imagePath,
       layer: desiredLayer
     });
+    if (token !== previewLoadToken) return;
     if (result.success) {
       currentPreviewImage.value = result.data;
       return;
@@ -1107,6 +2089,7 @@ async function loadPreviewImage(imagePath: string) {
   }
 
   const result = await api.readImage(imagePath);
+  if (token !== previewLoadToken) return;
   if (result.success) {
     currentPreviewImage.value = result.data;
   } else {
@@ -1128,15 +2111,6 @@ async function loadVideoPreview(videoPath: string) {
   }
 }
 
-function handleJobSelect(jobId: string) {
-  // Toggle selection if clicking on already selected job
-  if (renderQueue.selectedJobId === jobId) {
-    renderQueue.selectJob(null);
-  } else {
-    renderQueue.selectJob(jobId);
-  }
-}
-
 function handlePreviewContainerClick() {
   // Clicking on empty preview area deselects job
   if (!currentPreviewImage.value && !videoPreviewSrc.value) {
@@ -1148,9 +2122,10 @@ async function handleExrLayerChange(e: Event) {
   const select = e.target as HTMLSelectElement;
   renderQueue.setSelectedExrLayer(select.value);
   
-  // Reload current frame with new layer
-  if (currentPreviewJob.value?.lastRenderedFrame) {
-    await loadPreviewImage(currentPreviewJob.value.lastRenderedFrame);
+  // Reload the frame on screen with the new layer
+  const path = displayedPreviewPath.value || currentPreviewJob.value?.lastRenderedFrame;
+  if (path) {
+    await loadPreviewImage(path);
   }
 }
 
@@ -1178,30 +2153,53 @@ function startSequencePlayback() {
   }, frameInterval);
 }
 
-function stopSequencePlayback() {
+function stopSequencePlayback({ reload = true }: { reload?: boolean } = {}) {
+  const wasPlaying = renderQueue.isSequencePlayback;
   if (sequencePlaybackInterval) {
     clearInterval(sequencePlaybackInterval);
     sequencePlaybackInterval = null;
   }
   renderQueue.setSequencePlayback(false);
-  
-  // Show last rendered frame
-  if (currentPreviewJob.value?.lastRenderedFrame) {
-    loadPreviewImage(currentPreviewJob.value.lastRenderedFrame);
+
+  // Back to the frame that was on screen before playback (the newest one unless stepped back)
+  if (reload && wasPlaying && previewFrameCount.value > 0) {
+    showPreviewFrame(scrubIndex.value ?? previewFrameCount.value - 1);
   }
 }
 
 async function handleScrubberChange(e: Event) {
   const input = e.target as HTMLInputElement;
-  const frameIndex = parseInt(input.value);
-  const job = currentPreviewJob.value;
-  if (job && job.renderedFramePaths[frameIndex]) {
-    await loadPreviewImage(job.renderedFramePaths[frameIndex]);
-  }
+  await showPreviewFrame(parseInt(input.value, 10));
 }
 
 // Initialize
 onMounted(async () => {
+  // Track the monitor's height (sparklines) and the preview's size (zoom to fit)
+  if (typeof ResizeObserver !== 'undefined') {
+    monitorResizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === previewContainerRef.value) {
+          previewContainerSize.value = { w: entry.contentRect.width, h: entry.contentRect.height };
+        } else {
+          monitorSectionHeight.value = entry.contentRect.height;
+        }
+      }
+    });
+    if (monitorSectionRef.value) monitorResizeObserver.observe(monitorSectionRef.value);
+    if (previewContainerRef.value) monitorResizeObserver.observe(previewContainerRef.value);
+  }
+
+  window.addEventListener('keydown', handleGlobalKeydown);
+  window.addEventListener('pagehide', saveLayoutNow);
+
+  // Default layout (first launch): the monitor gets just the height of its bars, measured once
+  // fonts are in. A saved layout keeps its proportions; the bars are still measured for the sparklines.
+  (document.fonts?.ready ?? Promise.resolve()).then(() => requestAnimationFrame(() => {
+    if (restoredLayout) measureBarsFitHeight();
+    else fitMonitorToBars();
+    requestAnimationFrame(() => { layoutSettling.value = false; });
+  }));
+
   // Start system monitoring
   systemMonitor.startMonitoring();
   
@@ -1226,12 +2224,13 @@ onMounted(async () => {
     }
     
     // Load all app installations in parallel
-    const [blenderInstalls, cinema4dInstalls, houdiniInstalls, aeInstalls, nukeInstalls] = await Promise.all([
+    const [blenderInstalls, cinema4dInstalls, houdiniInstalls, aeInstalls, nukeInstalls, mayaInstalls] = await Promise.all([
       api.findBlenderInstallations(),
       api.findCinema4DInstallations?.() || [],
       api.findHoudiniInstallations?.() || [],
       api.findAfterEffectsInstallations?.() || [],
       api.findNukeInstallations?.() || [],
+      api.findMayaInstallations?.() || [],
     ]);
     
     // Store all installations in the queue store
@@ -1240,6 +2239,7 @@ onMounted(async () => {
     renderQueue.setAppInstallations(ApplicationType.HOUDINI, houdiniInstalls || []);
     renderQueue.setAppInstallations(ApplicationType.AFTER_EFFECTS, aeInstalls || []);
     renderQueue.setAppInstallations(ApplicationType.NUKE, nukeInstalls || []);
+    renderQueue.setAppInstallations(ApplicationType.MAYA, mayaInstalls || []);
     
     // Legacy: Also set Blender installations for backwards compatibility
     renderQueue.setBlenderInstallations(blenderInstalls || []);
@@ -1255,6 +2255,10 @@ onMounted(async () => {
     // Auto-select first installation for other apps if not already set
     if (!settings.applicationPaths?.cinema4d && cinema4dInstalls?.length > 0) {
       settings.setAppPath(ApplicationType.CINEMA4D, cinema4dInstalls[0].commandLinePath || cinema4dInstalls[0].path);
+    }
+    if (!settings.applicationPaths?.maya && mayaInstalls?.length > 0) {
+      // Render (the batch renderer) rather than the Maya GUI
+      settings.setAppPath(ApplicationType.MAYA, mayaInstalls[0].commandLinePath || mayaInstalls[0].path);
     }
     if (!settings.applicationPaths?.houdini && houdiniInstalls?.length > 0) {
       settings.setAppPath(ApplicationType.HOUDINI, houdiniInstalls[0].commandLinePath || houdiniInstalls[0].path);
@@ -1334,20 +2338,6 @@ onMounted(async () => {
     });
   }
 
-  // Set up ResizeObserver for mini-graphs height tracking
-  if (typeof ResizeObserver !== 'undefined') {
-    monitorResizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        monitorSectionHeight.value = entry.contentRect.height;
-      }
-    });
-    // We'll observe the monitor section when the tab is active
-    const monitorEl = document.querySelector('.system-monitor');
-    if (monitorEl) {
-      monitorResizeObserver.observe(monitorEl);
-    }
-  }
-  
   // Start graph rendering if Graph tab is active
   if (monitorTab.value === 'Graph') {
     await nextTick();
@@ -1360,6 +2350,9 @@ onUnmounted(() => {
   cleanupRenderListeners();
   stopSequencePlayback();
   stopGraphRendering();
+  window.removeEventListener('keydown', handleGlobalKeydown);
+  window.removeEventListener('pagehide', saveLayoutNow);
+  saveLayoutNow();
 
   // Clean up ResizeObserver
   if (monitorResizeObserver) {
@@ -1452,15 +2445,17 @@ function setupRenderListeners() {
         renderQueue.addRenderedFrame(data.jobId, data.outputPath);
       }
       
-      // Load preview image (only if not in sequence playback mode and viewing this job)
+      // Load preview image (only if not in sequence playback mode, viewing this job, and not stepped back to an earlier frame)
       if (!renderQueue.isSequencePlayback && (!renderQueue.selectedJobId || renderQueue.selectedJobId === data.jobId)) {
         // For EXR while rendering, wait for the main process to send 'frame-preview'
         // (generated between frames to avoid spawning concurrent Blender instances).
-        if (!data.outputPath.toLowerCase().endsWith('.exr')) {
+        if (!data.outputPath.toLowerCase().endsWith('.exr') && scrubIndex.value === null) {
           const result = await api.readImage(data.outputPath);
-          if (result.success) {
+          if (result.success && scrubIndex.value === null) {
+            previewLoadToken++; // a slower load started earlier must not replace this frame
             renderQueue.setPreview(data.outputPath, result.data);
             currentPreviewImage.value = result.data;
+            displayedPreviewPath.value = data.outputPath;
           }
         }
         
@@ -1485,29 +2480,34 @@ function setupRenderListeners() {
     api.onFramePreview((data: any) => {
       if (!data?.data) return;
       // Only update preview if we’re currently previewing this job (or no explicit selection)
-      if (!renderQueue.isSequencePlayback && (!renderQueue.selectedJobId || renderQueue.selectedJobId === data.jobId)) {
+      if (!renderQueue.isSequencePlayback && scrubIndex.value === null && (!renderQueue.selectedJobId || renderQueue.selectedJobId === data.jobId)) {
+        previewLoadToken++; // a slower load started earlier must not replace this frame
         renderQueue.setPreview(data.outputPath, data.data);
         currentPreviewImage.value = data.data;
+        displayedPreviewPath.value = data.outputPath;
       }
     });
   }
   
   api.onRenderComplete((data: any) => {
     renderQueue.completeCurrentJob();
-    
+    const finishedName = renderQueue.jobs.find(j => j.id === data.jobId)?.fileName || 'job';
+    announce(`Finished rendering ${finishedName}`);
+
     // Send notification
     if (settings.notifications) {
       api.showNotification({
         title: 'Render Complete',
-        message: `Finished rendering ${renderQueue.jobs.find(j => j.id === data.jobId)?.fileName || 'job'}`,
+        message: `Finished rendering ${finishedName}`,
       });
     }
-    
+
     // Start next job if available
     if (renderQueue.pendingJobs.length > 0 && renderQueue.isRendering) {
       startNextJob();
     } else if (renderQueue.pendingJobs.length === 0) {
       renderQueue.isRendering = false;
+      announce('All render jobs are complete');
       if (settings.notifications) {
         api.showNotification({
           title: 'Queue Complete',
@@ -1518,8 +2518,10 @@ function setupRenderListeners() {
   });
   
   api.onRenderError((data: any) => {
+    const failedName = renderQueue.currentJob?.fileName;
     renderQueue.errorCurrentJob(data.error);
-    
+    announce(`Render error${failedName ? ` in ${failedName}` : ''}: ${data.error}`, true);
+
     if (settings.notifications) {
       api.showNotification({
         title: 'Render Error',
@@ -1560,21 +2562,20 @@ function handleResize(e: MouseEvent) {
   if (!mainEl) return;
   
   const mainRect = mainEl.getBoundingClientRect();
-  const handleWidth = 12; // resize handle width
-  const newWidth = mainRect.right - e.clientX;
+  const available = mainRect.width - RESIZE_HANDLE_SIZE;
+  if (available <= 0) return;
+  const queueWidth = e.clientX - mainRect.left - RESIZE_HANDLE_SIZE / 2;
+  const infoWidth = available - queueWidth;
   
   // Snap to collapse preview panel (right side)
-  if (newWidth < SNAP_THRESHOLD) {
-    previewPanelWidth.value = 0;
+  if (infoWidth < SNAP_THRESHOLD) {
     previewCollapsed.value = true;
     queueCollapsed.value = false;
     return;
   }
   
   // Snap to collapse queue panel (left side)
-  const queueWidth = mainRect.width - newWidth - handleWidth;
   if (queueWidth < SNAP_THRESHOLD) {
-    previewPanelWidth.value = mainRect.width - handleWidth;
     previewCollapsed.value = false;
     queueCollapsed.value = true;
     return;
@@ -1583,7 +2584,8 @@ function handleResize(e: MouseEvent) {
   // Normal resize within bounds
   previewCollapsed.value = false;
   queueCollapsed.value = false;
-  previewPanelWidth.value = Math.max(MIN_PANEL_WIDTH, Math.min(newWidth, mainRect.width - MIN_PANEL_WIDTH - handleWidth));
+  const clamped = Math.max(MIN_PANEL_WIDTH, Math.min(queueWidth, available - MIN_PANEL_WIDTH));
+  queueRatio.value = Math.min(1, Math.max(0, clamped / available));
 }
 
 function stopResize() {
@@ -1676,7 +2678,7 @@ async function handleDrop(e: DragEvent) {
   if (!e.dataTransfer?.files) return;
   
   // All supported extensions
-  const supportedExtensions = ['.blend', '.c4d', '.hip', '.hiplc', '.hipnc', '.aep', '.aepx', '.nk', '.nknc', '.nkind'];
+  const supportedExtensions = Object.keys(APPLICATION_FILE_EXTENSIONS);
   
   const files = Array.from(e.dataTransfer.files)
     .filter(file => {
@@ -1756,6 +2758,9 @@ async function loadQueue() {
   
   if (result.success && result.queue) {
     renderQueue.jobs = result.queue.jobs || [];
+    renderQueue.currentJobIndex = -1;
+    renderQueue.selectJob(null);
+    expandedJobIds.value.clear();
     if (result.queue.blenderPath) {
       renderQueue.setBlenderPath(result.queue.blenderPath);
     }
@@ -1896,6 +2901,8 @@ function getAppPathForType(appType: ApplicationType): string {
       return paths?.aftereffects || '';
     case ApplicationType.NUKE:
       return paths?.nuke || '';
+    case ApplicationType.MAYA:
+      return paths?.maya || '';
     default:
       return '';
   }
@@ -1913,6 +2920,8 @@ function getDefaultRenderEngine(appType: ApplicationType): string {
       return 'AE Render';
     case ApplicationType.NUKE:
       return 'Nuke';
+    case ApplicationType.MAYA:
+      return 'Maya';
     default:
       return 'Unknown';
   }
@@ -2006,8 +3015,10 @@ function startJobRender(job: RenderJob, { resume = false }: { resume?: boolean }
     renderQueue.isRendering = true;
     renderQueue.isPaused = false;
     renderQueue.updateJob(job.id, { status: 'rendering', renderStartTime: Date.now(), error: null });
+    announce(`Resumed rendering ${job.fileName}`);
   } else {
     renderQueue.startRendering();
+    announce(`Rendering ${job.fileName}`);
     renderQueue.updateJob(job.id, {
       status: 'rendering',
       renderStartTime: Date.now(),
@@ -2137,6 +3148,7 @@ function handleOverwriteCancel() {
 async function pauseRendering() {
   await (window as any).electronAPI.pauseRender();
   renderQueue.pauseRendering();
+  announce('Rendering paused');
 }
 
 async function resumeRendering() {
@@ -2153,6 +3165,7 @@ async function resumeRendering() {
 async function stopRendering() {
   await (window as any).electronAPI.stopRender();
   renderQueue.stopRendering();
+  announce('Rendering stopped');
 }
 
 function moveJobUp(index: number) {
@@ -2242,8 +3255,9 @@ function getFileName(path: string): string {
 }
 
 function openPreviewInExplorer() {
-  if (renderQueue.previewPath) {
-    (window as any).electronAPI.openInExplorer(renderQueue.previewPath);
+  const path = displayedPreviewPath.value || renderQueue.previewPath;
+  if (path) {
+    (window as any).electronAPI.openInExplorer(path);
   }
 }
 
@@ -2424,6 +3438,15 @@ function parseFrameRanges(rangeString: string): number[] {
   display: flex;
   flex: 1;
   overflow: hidden;
+
+  // Panels follow the pointer directly while a splitter is dragged
+  &--resizing {
+    .panel,
+    .preview-section,
+    .monitor-section {
+      transition: none;
+    }
+  }
 }
 
 .panel {
@@ -2431,10 +3454,9 @@ function parseFrameRanges(rangeString: string): number[] {
   flex-direction: column;
   background-color: $bg-secondary;
   overflow: hidden;
-  transition: width 0.15s ease;
+  transition: flex-grow 0.15s ease;
   
   &--queue {
-    flex: 1;
     min-width: 0;
   }
   
@@ -2452,7 +3474,7 @@ function parseFrameRanges(rangeString: string): number[] {
     .panel__header,
     .panel__content,
     .panel__footer,
-    .preview-section,
+    .preview-section:not(.preview-section--fullscreen),
     .monitor-section {
       display: none;
     }
@@ -2528,13 +3550,20 @@ function parseFrameRanges(rangeString: string): number[] {
   
   &__label {
     position: absolute;
+    z-index: 1;
     background-color: $accent-primary;
     color: white;
+    border: none;
     border-radius: $radius-sm;
     padding: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
+
+    &:hover {
+      background-color: $accent-primary-hover;
+    }
     
     &--left {
       left: -8px;
@@ -2633,13 +3662,12 @@ function parseFrameRanges(rangeString: string): number[] {
 }
 
 .preview-section {
-  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-bottom: 1px solid $border-subtle;
   overflow: hidden;
-  transition: all 150ms ease;
+  transition: flex-grow 150ms ease;
   
   &.preview-section--minimized {
     height: 0 !important;
@@ -2666,9 +3694,33 @@ function parseFrameRanges(rangeString: string): number[] {
   display: flex;
   align-items: center;
   gap: $spacing-03;
+  flex: 1;
+  min-width: 0;
+  margin-left: $spacing-04;
+
+  &--end {
+    flex: 0 0 auto;
+    gap: $spacing-02;
+  }
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: $spacing-01;
+  margin-right: $spacing-02;
+
+  &__value {
+    min-width: 44px;
+    text-align: right;
+    font-size: $font-size-xs;
+    font-family: $font-family-mono;
+    color: $text-secondary;
+  }
 }
 
 .preview-container {
+  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
@@ -2676,7 +3728,65 @@ function parseFrameRanges(rangeString: string): number[] {
   padding: $spacing-04;
   overflow: hidden;
   background-color: $bg-primary;
-  cursor: pointer;
+
+  &--zoomed {
+    cursor: grab;
+  }
+
+  &--panning {
+    cursor: grabbing;
+  }
+}
+
+// Full view: the preview fills the window (Esc / F / the button exit it)
+.preview-section.preview-section--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  height: auto !important;
+  min-height: 0;
+  border-bottom: none;
+  background-color: $bg-secondary;
+}
+
+// Header summary of the queue while nothing is rendering
+.queue-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: $spacing-02 $spacing-03;
+  font-size: $font-size-xs;
+  color: $text-tertiary;
+
+  &__item {
+    padding: 2px $spacing-03;
+    border-radius: 999px;
+    background-color: $bg-tertiary;
+    white-space: nowrap;
+
+    &--total { color: $text-primary; }
+    &--pending { color: $status-idle; }
+    &--paused { color: $status-paused; }
+    &--complete { color: $status-complete; }
+    &--error { color: $status-error; }
+  }
+}
+
+// Bulk actions for a multi-selection
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: $spacing-02;
+  padding: $spacing-02 $spacing-05;
+  background-color: rgba($accent-primary, 0.12);
+  border-bottom: 1px solid $border-subtle;
+
+  &__count {
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+    color: $accent-primary;
+    margin-right: auto;
+  }
 }
 
 .preview-image {
@@ -2857,7 +3967,7 @@ function parseFrameRanges(rangeString: string): number[] {
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: $border-subtle;
+  background: $carbon-gray-60;
   border-radius: 2px;
   cursor: pointer;
   
@@ -2890,6 +4000,16 @@ function parseFrameRanges(rangeString: string): number[] {
   color: $text-secondary;
   font-family: $font-family-mono;
   min-width: 60px;
+  white-space: nowrap;
+}
+
+.preview-frame-number {
+  color: $text-primary;
+  margin-right: $spacing-02;
+}
+
+.monitor-minimize {
+  margin-left: $spacing-02;
 }
 
 .preview-fps {
@@ -2915,20 +4035,19 @@ function parseFrameRanges(rangeString: string): number[] {
     outline: none;
     border-color: $accent-primary;
   }
+
+  &:focus-visible {
+    outline: 2px solid $accent-primary;
+    outline-offset: 1px;
+  }
 }
 
 .monitor-section {
-  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: all 150ms ease;
-  
-  &.monitor-section--minimized {
-    flex: 0 0 0;
-    min-height: 0;
-  }
+  transition: flex-grow 150ms ease;
   
   .panel__header {
     padding: $spacing-03 $spacing-05;
@@ -2959,7 +4078,7 @@ function parseFrameRanges(rangeString: string): number[] {
 }
 
 .monitor-mini-graph {
-  height: 20px;
+  height: 28px;
   width: 100%;
   background: rgba(0, 0, 0, 0.15);
   border-radius: $radius-sm;

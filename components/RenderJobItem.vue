@@ -3,47 +3,88 @@
     class="job-item" 
     :class="[`job-item--${job.status}`, { 'job-item--dragging': isDragging, 'job-item--selected': isSelected }]"
     :draggable="draggable && job.status !== 'rendering'"
+    :data-job-id="job.id"
+    role="listitem"
+    tabindex="0"
+    :aria-label="ariaLabel"
     @click="handleClick"
+    @dblclick="handleDoubleClick"
     @contextmenu.prevent="handleContextMenu"
     @dragstart="handleDragStart"
     @dragend="handleDragEnd"
   >
     <!-- Context Menu -->
-    <div 
-      v-if="showContextMenu" 
+    <div
+      v-if="showContextMenu"
       ref="contextMenuEl"
-      class="context-menu" 
+      class="context-menu"
+      role="menu"
+      :aria-label="`Actions for ${job.fileName}`"
       :style="contextMenuPosition"
       @click.stop
+      @keydown="handleMenuKeydown"
     >
-      <button class="context-menu__item" @click="openOutputFolder">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+      <template v-if="bulkCount <= 1">
+        <button class="context-menu__item" role="menuitem" @click="openOutputFolder">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+          </svg>
+          <span>Open Output Folder</span>
+        </button>
+        <button class="context-menu__item" role="menuitem" @click="openProjectFolder">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10H6v-2h8v2zm4-4H6v-2h12v2z"/>
+          </svg>
+          <span>Open Project Folder</span>
+        </button>
+        <button class="context-menu__item" role="menuitem" @click="openProject">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+          </svg>
+          <span>Open Project in {{ appLabel }}</span>
+        </button>
+        <div class="context-menu__divider" role="separator"></div>
+        <button class="context-menu__item" role="menuitem" @click="menuAction('duplicate')" :disabled="job.status === 'loading'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+          </svg>
+          <span>Duplicate</span>
+        </button>
+      </template>
+      <button class="context-menu__item" role="menuitem" @click="menuAction('moveTop')" :disabled="bulkCount <= 1 && index === 0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M8 11h3v10h2V11h3l-4-4-4 4zM4 3v2h16V3H4z"/>
         </svg>
-        <span>Open Output Folder</span>
+        <span>Move to Top{{ bulkSuffix }}</span>
       </button>
-      <button class="context-menu__item" @click="openProjectFolder">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10H6v-2h8v2zm4-4H6v-2h12v2z"/>
+      <button class="context-menu__item" role="menuitem" @click="menuAction('moveBottom')" :disabled="bulkCount <= 1 && index === total - 1">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M16 13h-3V3h-2v10H8l4 4 4-4zM4 19v2h16v-2H4z"/>
         </svg>
-        <span>Open Project Folder</span>
+        <span>Move to Bottom{{ bulkSuffix }}</span>
       </button>
-      <button class="context-menu__item" @click="openProject">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
-        </svg>
-        <span>Open Project in {{ appLabel }}</span>
-      </button>
-      <div class="context-menu__divider"></div>
-      <button 
-        class="context-menu__item" 
-        @click="resetJob"
-        :disabled="job.status === 'rendering' || job.status === 'idle'"
+      <div class="context-menu__divider" role="separator"></div>
+      <button
+        class="context-menu__item"
+        role="menuitem"
+        @click="menuAction('reset')"
+        :disabled="bulkCount <= 1 && !canReset"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
         </svg>
-        <span>Reset to Pending</span>
+        <span>Reset to Pending{{ bulkSuffix }}</span>
+      </button>
+      <button
+        class="context-menu__item context-menu__item--danger"
+        role="menuitem"
+        @click="menuAction('remove')"
+        :disabled="bulkCount <= 1 && (job.status === 'rendering' || job.status === 'paused')"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+        </svg>
+        <span>Remove{{ bulkSuffix }}</span>
       </button>
     </div>
 
@@ -51,7 +92,8 @@
       <div 
         class="job-item__drag-handle" 
         v-if="draggable && job.status !== 'rendering'"
-        title="Drag to reorder"
+        title="Drag to reorder (or Alt+↑/↓)"
+        aria-hidden="true"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
@@ -79,10 +121,12 @@
       <div class="job-item__actions">
         <button 
           class="btn btn--ghost btn--icon btn--sm" 
-          @click="expanded = !expanded"
-          :title="expanded ? 'Collapse' : 'Expand'"
+          @click="$emit('toggle-expand')"
+          :title="expanded ? 'Hide settings' : 'Show settings'"
+          :aria-label="`${expanded ? 'Hide' : 'Show'} settings for ${job.fileName}`"
+          :aria-expanded="expanded"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path v-if="expanded" d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/>
             <path v-else d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/>
           </svg>
@@ -90,10 +134,11 @@
         <button 
           class="btn btn--ghost btn--icon btn--sm text-error" 
           @click="$emit('remove')"
-          :disabled="job.status === 'rendering'"
+          :disabled="job.status === 'rendering' || job.status === 'paused'"
           title="Remove"
+          :aria-label="`Remove ${job.fileName}`"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
           </svg>
         </button>
@@ -102,7 +147,14 @@
 
     <!-- Progress bar -->
     <div class="job-item__progress">
-      <div class="progress-bar">
+      <div
+        class="progress-bar"
+        role="progressbar"
+        :aria-label="`${job.fileName} progress`"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-valuenow="job.status === 'loading' ? undefined : Math.round(job.progress)"
+      >
         <div 
           class="progress-bar__fill" 
           :class="[`progress-bar__fill--${job.status}`]"
@@ -499,8 +551,9 @@
               class="btn btn--ghost btn--icon btn--sm"
               @click="openOutputFolder"
               title="Open in Explorer"
+              aria-label="Open output folder"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
               </svg>
             </button>
@@ -509,7 +562,7 @@
       </div>
 
       <!-- Error message -->
-      <div v-if="job.error" class="job-item__error">
+      <div v-if="job.error" class="job-item__error" role="alert">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
         </svg>
@@ -521,7 +574,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import type { RenderJob } from '~/stores/renderQueue';
+import type { RenderJob, JobMenuAction } from '~/stores/renderQueue';
 import {
   ApplicationType, APPLICATION_INFO, type BlenderRenderSettings, type NukeRenderSettings, type NukeWriteNodeInfo,
 } from '~/types/applications';
@@ -533,8 +586,11 @@ type BlendJob = RenderJob;
 const props = defineProps<{
   job: RenderJob;
   index: number;
+  total?: number;          // jobs in the queue
   draggable?: boolean;
   isSelected?: boolean;
+  expanded?: boolean;
+  selectionCount?: number; // selected jobs: context-menu actions apply to all of them when this one is selected
 }>();
 
 const emit = defineEmits<{
@@ -542,11 +598,15 @@ const emit = defineEmits<{
   (e: 'update', updates: Partial<RenderJob>): void;
   (e: 'dragstart', event: DragEvent): void;
   (e: 'dragend', event: DragEvent): void;
-  (e: 'select'): void;
-  (e: 'reset'): void;
+  (e: 'select', modifiers: { ctrl: boolean; shift: boolean; context?: boolean }): void;
+  (e: 'toggle-expand'): void;
+  (e: 'action', action: JobMenuAction): void;
 }>();
 
-const expanded = ref(false);
+const total = computed(() => props.total ?? props.index + 1);
+const bulkCount = computed(() => (props.isSelected ? props.selectionCount || 1 : 1));
+const bulkSuffix = computed(() => (bulkCount.value > 1 ? ` (${bulkCount.value} jobs)` : ''));
+const canReset = computed(() => !['rendering', 'idle', 'loading', 'missing-app'].includes(props.job.status));
 const isDragging = ref(false);
 const showContextMenu = ref(false);
 const contextMenuPosition = ref({ top: '0px', left: '0px' });
@@ -846,13 +906,55 @@ const appTextColor = computed(() => {
   return brightness > 128 ? '#1a1a1a' : '#ffffff';
 });
 
+const ariaLabel = computed(() => {
+  const parts = [props.job.fileName, appLabel.value, statusLabel.value];
+  if (props.job.status !== 'loading') parts.push(`${Math.round(props.job.progress)}%`);
+  if (props.isSelected) parts.push('selected');
+  return parts.join(', ');
+});
+
+// Clicks on the controls and settings inside the card don't change the selection
+function isInteractive(target: HTMLElement) {
+  return !!target.closest('button, input, select, textarea, label, summary, a, .job-item__drag-handle, .job-item__details, .context-menu');
+}
+
 function handleClick(e: MouseEvent) {
-  // Don't trigger select if clicking on buttons or drag handle
-  const target = e.target as HTMLElement;
-  if (target.closest('button') || target.closest('.job-item__drag-handle')) {
+  // the second click of a double-click (which expands the job) must not deselect it
+  if (e.detail > 1 || isInteractive(e.target as HTMLElement)) return;
+  emit('select', { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
+}
+
+function handleDoubleClick(e: MouseEvent) {
+  if (isInteractive(e.target as HTMLElement)) return;
+  emit('toggle-expand');
+}
+
+function menuAction(action: JobMenuAction) {
+  closeContextMenu();
+  emit('action', action);
+}
+
+// Arrow keys move between menu items; Escape or Tab closes the menu
+function handleMenuKeydown(e: KeyboardEvent) {
+  const menu = contextMenuEl.value;
+  const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('.context-menu__item:not(:disabled)') || []);
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  let next: HTMLButtonElement | undefined;
+  if (e.key === 'ArrowDown') next = items[(current + 1) % items.length];
+  else if (e.key === 'ArrowUp') next = items[(current - 1 + items.length) % items.length];
+  else if (e.key === 'Home') next = items[0];
+  else if (e.key === 'End') next = items[items.length - 1];
+  else if (e.key === 'Escape' || e.key === 'Tab') {
+    e.preventDefault();
+    e.stopPropagation();
+    const card = menu?.closest('.job-item') as HTMLElement | null;
+    closeContextMenu();
+    card?.focus();
     return;
-  }
-  emit('select');
+  } else return;
+  e.preventDefault();
+  e.stopPropagation();
+  next?.focus();
 }
 
 function handleDragStart(e: DragEvent) {
@@ -947,20 +1049,26 @@ function handleContextMenu(e: MouseEvent) {
   // Reset in case previous listeners/menu state is still around
   closeContextMenu();
   
+  // Right-clicking a job outside the selection selects it first
+  emit('select', { ctrl: false, shift: false, context: true });
+
   // Get the bounding rect of the job item to position the menu
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  
+
   // Position the menu at the click point, but relative to the item
+  // (opened from the keyboard with Shift+F10 / the Menu key there is no pointer position)
+  const fromKeyboard = e.clientX === 0 && e.clientY === 0;
   contextMenuPosition.value = {
-    top: `${e.clientY - rect.top}px`,
-    left: `${e.clientX - rect.left}px`
+    top: fromKeyboard ? '16px' : `${e.clientY - rect.top}px`,
+    left: fromKeyboard ? '16px' : `${e.clientX - rect.left}px`
   };
-  
+
   showContextMenu.value = true;
-  
-  // Attach global listeners after this event finishes bubbling.
+
+  // Attach global listeners after this event finishes bubbling, and focus the first item.
   setTimeout(() => {
     attachContextMenuListeners();
+    contextMenuEl.value?.querySelector<HTMLButtonElement>('.context-menu__item:not(:disabled)')?.focus();
   }, 0);
 }
 
@@ -983,24 +1091,6 @@ function openProject() {
   if (typeof window !== 'undefined' && (window as any).electronAPI) {
     // Open the project file with its default application (like double-clicking)
     (window as any).electronAPI.openFileWithDefaultApp(props.job.filePath);
-  }
-  closeContextMenu();
-}
-
-function resetJob() {
-  if (props.job.status !== 'rendering' && props.job.status !== 'idle') {
-    emit('update', {
-      status: 'idle',
-      progress: 0,
-      currentFrame: 0,
-      elapsedTime: 0,
-      estimatedTimeRemaining: 0,
-      lastRenderedFrame: null,
-      error: null,
-      renderStartTime: null,
-      frameTimes: [],
-      renderedFramePaths: [],
-    });
   }
   closeContextMenu();
 }
@@ -1430,8 +1520,13 @@ onUnmounted(() => {
     cursor: pointer;
     transition: background-color $transition-fast ease;
     
-    &:hover:not(:disabled) {
+    &:hover:not(:disabled),
+    &:focus-visible {
       background-color: rgba($accent-primary, 0.1);
+    }
+
+    &:focus-visible {
+      outline-offset: -2px;
     }
     
     &:disabled {
@@ -1442,6 +1537,14 @@ onUnmounted(() => {
     svg {
       flex-shrink: 0;
       color: $text-secondary;
+    }
+
+    &--danger {
+      color: $status-error;
+
+      svg {
+        color: $status-error;
+      }
     }
   }
   

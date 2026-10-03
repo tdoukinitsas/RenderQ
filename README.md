@@ -14,11 +14,12 @@ Built with AI Assistance from Github Copilot using Claude Opus 4.5, Claude Sonne
 | **Cinema 4D** | `.c4d` | Windows, macOS |
 | **Houdini** | `.hip`, `.hiplc`, `.hipnc` | Windows, macOS, Linux |
 | **After Effects** | `.aep`, `.aepx` | Windows, macOS |
-| **Nuke** | `.nk`, `.nknc` | Windows, macOS, Linux |
+| **Nuke** | `.nk`, `.nknc`, `.nkind` | Windows, macOS, Linux |
+| **Maya** | `.ma`, `.mb` | Windows, macOS, Linux |
 
 ## Features
 
-- **Multi-Application Support**: Render Blender, Cinema 4D, Houdini, After Effects, and Nuke files from a single queue
+- **Multi-Application Support**: Render Blender, Cinema 4D, Houdini, After Effects, Nuke and Maya files from a single queue
 - **Batch Rendering**: Add multiple scene files to a render queue
 - **Custom Frame Ranges**: Set optional frame ranges for each file (supports multiple ranges like "1-10, 50-60, 100")
 - **Overwrite Protection**: Warns when rendering would overwrite existing frames with options to skip or adjust
@@ -28,7 +29,12 @@ Built with AI Assistance from Github Copilot using Claude Opus 4.5, Claude Sonne
   - Color-coded status (blue=pending, yellow=rendering, green=complete, red=error)
   - Application-type badges with color coding
 - **Live Preview**: Shows the latest rendered frame as soon as it's available
-- **System Monitoring**: Real-time CPU, RAM, GPU, and VRAM usage
+  - Zoom (scroll, Fit, 1:1) and pan to check detail; full view with `F`
+  - Step through rendered frames with ←/→ or the scrubber, or play the sequence back
+- **Queue Management**: Multi-select jobs (Ctrl/Shift-click, Ctrl+A) to move, reset or remove them together; right-click to duplicate, move to top/bottom or open folders
+- **System Monitoring**: Real-time CPU, RAM, GPU, and VRAM usage as bars (with sparklines), a history graph, spawned processes with their output, and the app log
+- **Flexible Layout**: Panels keep their proportions when the window is resized, can be collapsed, and the layout is remembered between sessions (double-click a divider to reset it)
+- **Keyboard & Accessibility**: Shortcuts for everything (press `?` for the list), keyboard-resizable dividers, screen-reader labels and announcements, visible focus rings, reduced-motion support
 - **Pause/Resume**: Stop rendering mid-queue and resume later
 - **Queue Persistence**: 
   - Auto-saves queue to recover from crashes
@@ -77,7 +83,7 @@ npm run electron:build
 1. Click "Add Files" to select scene files from any supported application
 2. You can also drag & drop files directly into the queue
 3. The application will automatically detect the file type and read settings where possible
-4. Supported extensions: `.blend`, `.c4d`, `.hip`, `.hiplc`, `.hipnc`, `.aep`, `.aepx`, `.nk`, `.nknc`
+4. Supported extensions: `.blend`, `.c4d`, `.hip`, `.hiplc`, `.hipnc`, `.aep`, `.aepx`, `.nk`, `.nknc`, `.nkind`, `.ma`, `.mb`
 
 ### Setting Frame Ranges
 - By default, the frame range from the scene file is used (when available)
@@ -118,6 +124,23 @@ When frames already exist in the output directory:
 - **Save Queue**: Export the current queue to a JSON file
 - **Load Queue**: Import a previously saved queue
 - Auto-saves continuously to prevent data loss
+
+### Keyboard Shortcuts
+Press `?` (or F1) in the app for the full list. The main ones:
+
+| Keys | Action |
+|------|--------|
+| `Ctrl+I` | Add scene files |
+| `Ctrl+O` / `Ctrl+S` | Load / save the queue |
+| `Space` | Start, pause or resume rendering |
+| `↑` / `↓` (with `Shift` to extend) | Select jobs |
+| `Alt+↑` / `Alt+↓` | Move the selected jobs |
+| `Enter` / `Delete` / `Ctrl+D` | Show settings / remove / duplicate |
+| `←` / `→` | Previous / next rendered frame |
+| `F`, `0`, `1` | Full view, zoom to fit, actual size |
+
+### Screenshots for the docs site
+`scripts/screenshots/mock-electron-api.js` stands in for the Electron API so the UI runs in a plain browser with a sample queue. Inject it before the page's scripts (see the comments in the file), call `window.__renderqMock.stage()` once the app has loaded, and capture.
 
 ## Configuration
 
