@@ -1599,7 +1599,8 @@ ipcMain.handle('get-scene-info', async (event, { appPath, sceneFile, appType, ap
  */
 async function getNukeSceneInfo(nukePath, sceneFile, nukeSettings) {
   const job = new NukeRenderJob({
-    appPath: nukePath, sceneFile, frameRanges: '', jobId: null, settings: { licenseMode: nukeSettings.licenseMode }, deps: nukeJobDeps(),
+    appPath: nukePath, sceneFile, frameRanges: '', jobId: null, settings: { licenseMode: nukeSettings.licenseMode, nukeMode: nukeSettings.nukeMode },
+    deps: nukeJobDeps(),
   });
   const r = await job.info();
   const writes = (r.writes || []).map(({ done, ...w }) => w);
@@ -1618,6 +1619,8 @@ async function getNukeSceneInfo(nukePath, sceneFile, nukeSettings) {
     renderEngine: r.licenseLabel,
     nukeVersion: r.nukeVersion,
     nukeLicense: r.license,
+    nukeGuiMode: !!r.gui,           // renders in Nuke's GUI mode (hidden), see nukeRender.js
+    nukeGuiReason: r.guiReason || null,
     writeNodes: writes,
     loadErrors: r.loadErrors || [],
   };

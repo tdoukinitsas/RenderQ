@@ -86,6 +86,8 @@ export interface RenderJob {
   loadErrors?: string[];                 // errors Nuke reported while loading the comp
   nukeVersion?: string;
   nukeLicense?: string;
+  nukeGuiMode?: boolean;                 // renders in Nuke's GUI mode (hidden): a node only loads there
+  nukeGuiReason?: string | null;
   lastPreviewPath?: string | null;       // preview JPEG of the last rendered frame (Nuke)
 }
 
@@ -622,6 +624,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
           loadErrors: job.loadErrors,
           nukeVersion: job.nukeVersion,
           nukeLicense: job.nukeLicense,
+          nukeGuiMode: job.nukeGuiMode,
+          nukeGuiReason: job.nukeGuiReason,
           lastPreviewPath: job.status === 'complete' ? job.lastPreviewPath : null,
         }));
         

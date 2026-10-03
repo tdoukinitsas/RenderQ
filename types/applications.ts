@@ -389,6 +389,8 @@ export interface SceneInfo {
   loadErrors?: string[];             // Nuke: errors reported while loading the comp
   nukeVersion?: string;
   nukeLicense?: NukeLicenseMode;     // the licence mode that opened the comp
+  nukeGuiMode?: boolean;             // Nuke: renders in the (hidden) GUI - some node only loads there
+  nukeGuiReason?: string | null;
 }
 
 /**
@@ -462,6 +464,11 @@ export type NukeLicenseMode = 'auto' | 'nuke' | 'nuke-interactive' | 'nukex' | '
 export interface NukeRenderSettings {
   // Global (Settings > Nuke)
   licenseMode?: NukeLicenseMode;
+  /**
+   * 'auto' (default): terminal mode, or Nuke's GUI mode without a window when the comp has nodes that only
+   * load in the GUI (e.g. an Indie .gzind gizmo); 'terminal'; 'gui'
+   */
+  nukeMode?: 'auto' | 'terminal' | 'gui';
   /** Let GPU nodes use the GPU (Nuke's terminal mode runs them on the CPU otherwise; default true) */
   gpu?: boolean;
   threads?: number;

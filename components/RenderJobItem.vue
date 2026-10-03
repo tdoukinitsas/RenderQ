@@ -344,8 +344,11 @@
         <h5 class="job-item__section-title">Render Settings</h5>
         <div v-if="job.nukeVersion" class="job-item__detail">
           <label>Nuke</label>
-          <span>{{ job.nukeVersion }}{{ nukeLicenseLabel ? ` · ${nukeLicenseLabel}` : '' }}</span>
+          <span>{{ job.nukeVersion }}{{ nukeLicenseLabel ? ` · ${nukeLicenseLabel}` : '' }}{{ job.nukeGuiMode ? ' · GUI mode (hidden)' : '' }}</span>
         </div>
+        <p v-if="job.nukeGuiMode && job.nukeGuiReason" class="job-item__muted" :title="'Nuke renders this comp in its GUI mode, without a window, because ' + job.nukeGuiReason">
+          GUI mode: {{ job.nukeGuiReason }}
+        </p>
 
         <!-- Write nodes -->
         <div v-if="(job.writeNodes?.length || 0) > 0" class="job-item__subsection">

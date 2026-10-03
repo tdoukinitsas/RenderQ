@@ -385,7 +385,7 @@ import { ref, computed, onMounted } from 'vue';
 const baseURL = useRuntimeConfig().app.baseURL;
 const asset = (path: string) => `${baseURL}${path.replace(/^\/+/, '')}`;
 
-const version = ref('2.5.0');
+const version = ref('2.5.1');
 
 const apps = [
   {

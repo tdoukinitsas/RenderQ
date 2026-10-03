@@ -140,7 +140,7 @@
     `Fra:${1035 + i} Mem:6812.4M (Peak 7120.9M) | Time:00:${String(48 + (i * 7) % 11).padStart(2, '0')}.${String(10 + i * 3).slice(-2)} | Sample 512/512\nSaved: 'D:\\Projects\\Sunset\\renders\\shot_010\\shot_010_${1035 + i}.png'`).join('\n')
     + '\nFra:1049 Mem:6814.0M (Peak 7120.9M) | Time:00:31.07 | Remaining:00:20.41 | Sample 312/512';
   const appLog = [
-    '[12:01:07] RenderQ 2.5.0 started',
+    '[12:01:07] RenderQ 2.5.1 started',
     '[12:01:08] Found Blender 4.2.3, Cinema 4D 2025.1, Houdini 20.5.410, After Effects 2025, Nuke 15.1v3, Maya 2025',
     '[12:01:09] Restored auto-saved queue (6 jobs)',
     '[12:02:15] Starting job: shot_005_comp_v012.nk (Nuke, frames 1001-1096)',
@@ -151,7 +151,7 @@
 
   const ok = (extra = {}) => Promise.resolve({ success: true, ...extra });
   const api = {
-    getAppVersion: () => Promise.resolve('2.5.0'),
+    getAppVersion: () => Promise.resolve('2.5.1'),
     getSettings: () => Promise.resolve({ applicationPaths: appPaths, autoSave: true, notifications: true }),
     saveSettings: () => ok(),
     loadAutoSavedQueue: () => ok({ queue: JSON.parse(JSON.stringify(queue)) }),

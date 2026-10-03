@@ -773,7 +773,7 @@ const systemMonitor = useSystemMonitorStore();
 const settings = useSettingsStore();
 
 // App version from package.json (fetched via Electron)
-const appVersion = ref('2.5.0');
+const appVersion = ref('2.5.1');
 
 const showSettings = ref(false);
 const overwriteWarning = ref<{ job: RenderJob; existingFrames: any[] } | null>(null);
@@ -2382,6 +2382,7 @@ function setupRenderListeners() {
         updateData.currentFrame = data.doneCount;
         updateData.totalFrames = data.totalFrames;
         if (data.phase !== undefined) updateData.renderPhase = data.phase;
+        if (data.nukeGuiMode !== undefined) { updateData.nukeGuiMode = data.nukeGuiMode; updateData.nukeGuiReason = data.nukeGuiReason; }
         if (data.layer !== undefined) updateData.currentLayer = data.layer;
         if (data.frame !== undefined) updateData.currentFrameNumber = data.frame;
         if (data.frameDone) { updateData.currentSample = 0; updateData.totalSamples = 0; }
@@ -2880,6 +2881,8 @@ async function loadSceneFiles(filePaths: string[]) {
         loadErrors: info.loadErrors,
         nukeVersion: info.nukeVersion,
         nukeLicense: info.nukeLicense,
+        nukeGuiMode: info.nukeGuiMode,
+        nukeGuiReason: info.nukeGuiReason,
       });
     } catch (error) {
       console.error('Error loading scene file:', error);

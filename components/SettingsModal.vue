@@ -451,6 +451,20 @@
               <span v-if="nukeDetect.error" class="form-hint" style="color: var(--color-error, #f87171);">{{ nukeDetect.error }}</span>
             </div>
 
+            <div class="form-group">
+              <label class="form-label">Nuke mode</label>
+              <select
+                class="form-input"
+                v-model="appSettings.nuke.nukeMode"
+                @change="saveAppSettings('nuke')"
+              >
+                <option value="auto">Auto (terminal; hidden GUI when a node only loads in the GUI)</option>
+                <option value="terminal">Terminal only</option>
+                <option value="gui">GUI (hidden window)</option>
+              </select>
+              <span class="form-hint">Some gizmos only load in the Nuke GUI (e.g. Indie .gzind gizmos Nuke Indie refuses to render from the command line). Auto renders those comps in the GUI with no window.</span>
+            </div>
+
             <label class="setting-toggle">
               <input
                 type="checkbox"
@@ -617,6 +631,7 @@ const appSettings = reactive({
   },
   nuke: {
     licenseMode: 'auto',
+    nukeMode: 'auto',
     gpu: true,
     threads: 0,
     cacheSize: '',

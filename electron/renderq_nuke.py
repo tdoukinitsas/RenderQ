@@ -1,4 +1,8 @@
-"""RenderQ helper, run inside Nuke's terminal mode:  Nuke -t renderq_nuke.py config.json
+"""RenderQ helper, run inside Nuke:
+    terminal mode:  Nuke -t renderq_nuke.py config.json
+    GUI mode:       RENDERQ_NUKE_CONFIG=config.json Nuke -q renderq_nuke.py   (QT_QPA_PLATFORM=offscreen: no window)
+GUI mode is for comps with nodes Nuke refuses to load in terminal mode (e.g. some Indie .gzind gizmos, or
+gizmos added to the plugin path only in menu.py). There, output goes to sys.__stdout__ and the helper ends Nuke.
 
 Works with every Nuke licence (Nuke, NukeX, Indie, Non-commercial) and Python 2 or 3. Everything goes
 through Nuke's TCL layer: Indie allows only 10 Python Node objects per session, TCL has no such limit.
@@ -28,9 +32,12 @@ WRITE_CLASSES = ("Write", "DeepWrite", "WriteGeo", "GenerateLUT")
 MOVIE_TYPES = ("mov", "mov32", "mov64", "ffmpeg", "mxf", "mp4", "avi", "mkv", "webm")
 
 
+OUT = sys.__stdout__ or sys.stdout   # in GUI mode sys.stdout is the Script Editor
+
+
 def say(*parts):
-    sys.stdout.write(" ".join(str(p) for p in parts) + "\n")
-    sys.stdout.flush()
+    OUT.write(" ".join(str(p) for p in parts) + "\n")
+    OUT.flush()
 
 
 def tcl(cmd):
@@ -273,7 +280,7 @@ def render(cfg):
 
 
 def main():
-    with open(sys.argv[-1]) as f:
+    with open(os.environ.get("RENDERQ_NUKE_CONFIG") or sys.argv[-1]) as f:
         cfg = json.load(f)
     if cfg.get("mode") == "probe":
         probe(cfg)
@@ -281,13 +288,23 @@ def main():
         render(cfg)
 
 
+def finish(code):
+    if nuke.GUI:   # the GUI would stay open: end the process (sys.exit only ends this script there)
+        try:
+            OUT.flush()
+        finally:
+            os._exit(code)
+    sys.exit(code)
+
+
 if __name__ == "__main__":
     try:
         main()
-    except SystemExit:
-        raise
+        finish(0)
+    except SystemExit as e:
+        finish(e.code if isinstance(e.code, int) else (0 if e.code is None else 1))
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        traceback.print_exc(file=OUT)
         say("RENDERQ_ERROR", e)
-        sys.exit(1)
+        finish(1)
