@@ -7,6 +7,7 @@ const Store = require('electron-store');
 const sharp = require('sharp');
 const { autoUpdater } = require('electron-updater');
 const { BlenderRenderJob } = require('./blenderRender');
+const { NukeRenderJob, detectNukeLicenses } = require('./nukeRender');
 
 // Application type constants (mirroring types/applications.ts)
 const ApplicationType = {
@@ -23,7 +24,7 @@ const APP_FILE_EXTENSIONS = {
   [ApplicationType.CINEMA4D]: ['.c4d'],
   [ApplicationType.HOUDINI]: ['.hip', '.hiplc', '.hipnc'],
   [ApplicationType.AFTER_EFFECTS]: ['.aep', '.aepx'],
-  [ApplicationType.NUKE]: ['.nk', '.nknc'],
+  [ApplicationType.NUKE]: ['.nk', '.nknc', '.nkind'],
 };
 
 // Get all supported file extensions
@@ -57,7 +58,7 @@ const tempQueuePath = path.join(os.tmpdir(), 'renderq-temp.json');
 
 let mainWindow;
 let currentRenderProcess = null;
-let currentBlenderJob = null;   // BlenderRenderJob while a Blender queue item runs
+let currentRunnerJob = null;   // BlenderRenderJob / NukeRenderJob while such a queue item runs
 let isPaused = false;
 
 // Kill a render process and everything it started (Blender, aerender, ...).
@@ -1338,7 +1339,7 @@ ipcMain.handle('browse-scene-files', async () => {
       { name: 'Cinema 4D Files', extensions: ['c4d'] },
       { name: 'Houdini Files', extensions: ['hip', 'hiplc', 'hipnc'] },
       { name: 'After Effects Files', extensions: ['aep', 'aepx'] },
-      { name: 'Nuke Files', extensions: ['nk', 'nknc'] },
+      { name: 'Nuke Files', extensions: ['nk', 'nknc', 'nkind'] },
     ],
     properties: ['openFile', 'multiSelections']
   });
@@ -1516,7 +1517,7 @@ ipcMain.handle('check-existing-frames', async (event, { outputDir, outputPattern
  * Get scene info for any supported application type
  * Returns basic info for non-Blender files (since we can't easily parse them)
  */
-ipcMain.handle('get-scene-info', async (event, { appPath, sceneFile, appType }) => {
+ipcMain.handle('get-scene-info', async (event, { appPath, sceneFile, appType, appSettings }) => {
   // Determine app type from file extension if not provided
   const detectedAppType = appType || getAppTypeFromExtension(sceneFile);
   
@@ -1544,6 +1545,16 @@ ipcMain.handle('get-scene-info', async (event, { appPath, sceneFile, appType }) 
     }
   }
   
+  // For Nuke, open the comp in terminal mode: frame range, format and its Write nodes
+  if (detectedAppType === ApplicationType.NUKE) {
+    try {
+      const info = await getNukeSceneInfo(appPath, sceneFile, appSettings || {});
+      return { success: true, applicationType: ApplicationType.NUKE, ...info };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
   // For Maya, try to parse the scene file
   if (detectedAppType === ApplicationType.MAYA) {
     try {
@@ -1579,6 +1590,35 @@ ipcMain.handle('get-scene-info', async (event, { appPath, sceneFile, appType }) 
     isDefaults: true,
   };
 });
+
+/**
+ * Helper: Get Nuke comp info (via renderq_nuke.py's probe)
+ */
+async function getNukeSceneInfo(nukePath, sceneFile, nukeSettings) {
+  const job = new NukeRenderJob({
+    appPath: nukePath, sceneFile, frameRanges: '', jobId: null, settings: { licenseMode: nukeSettings.licenseMode }, deps: nukeJobDeps(),
+  });
+  const r = await job.info();
+  const writes = (r.writes || []).map(({ done, ...w }) => w);
+  const main = writes.find((w) => !w.disabled && w.connected) || writes[0] || null;
+  const enabled = writes.filter((w) => !w.disabled && w.connected);
+  return {
+    frameStart: r.first,
+    frameEnd: r.last,
+    fps: r.fps,
+    resolution: { x: r.width || 1920, y: r.height || 1080, percentage: 100 },
+    outputPath: main ? main.file : '',
+    outputDir: main ? path.dirname(main.file) : path.dirname(sceneFile),
+    outputPattern: main ? path.basename(main.file) : '',
+    format: main ? String(main.fileType || '').toUpperCase() : '',
+    isVideoOutput: enabled.length > 0 && enabled.every((w) => w.movie),
+    renderEngine: r.licenseLabel,
+    nukeVersion: r.nukeVersion,
+    nukeLicense: r.license,
+    writeNodes: writes,
+    loadErrors: r.loadErrors || [],
+  };
+}
 
 /**
  * Helper: Get Blender scene info
@@ -1795,7 +1835,7 @@ ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRang
     case ApplicationType.AFTER_EFFECTS:
       return startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     case ApplicationType.NUKE:
-      return startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
+      return startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume });
     case ApplicationType.MAYA:
       return startMayaRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     default:
@@ -1830,11 +1870,11 @@ async function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appS
       log: (...args) => console.log(...args),
     },
   });
-  currentBlenderJob = job;
+  currentRunnerJob = job;
   try {
     return await job.run();
   } finally {
-    if (currentBlenderJob === job) currentBlenderJob = null;
+    if (currentRunnerJob === job) currentRunnerJob = null;
   }
 }
 
@@ -2208,104 +2248,54 @@ function startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSe
   });
 }
 
-/**
- * Start Nuke render
- */
-function startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings }) {
-  return new Promise((resolve, reject) => {
-    isPaused = false;
-    
-    const frames = parseFrameRanges(frameRanges);
-    const frameStart = Math.min(...frames);
-    const frameEnd = Math.max(...frames);
-    
-    // Nuke command: nuke -F start-end -x script.nk
-    const args = ['-F', `${frameStart}-${frameEnd}`, '-x', sceneFile];
-    
-    // Add optional settings
-    if (appSettings?.writeNode) {
-      args.splice(3, 0, '-X', appSettings.writeNode);
-    }
-    if (appSettings?.continueOnError) {
-      args.unshift('--cont');
-    }
-    if (appSettings?.verbose !== undefined) {
-      args.unshift('-V', String(appSettings.verbose));
-    }
-    if (appSettings?.threads) {
-      args.unshift('-m', String(appSettings.threads));
-    }
-    if (appSettings?.cacheSize) {
-      args.unshift('-c', appSettings.cacheSize);
-    }
-    
-    currentRenderProcess = spawnTracked(appPath, args, {
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    }, { name: 'nuke-render' });
-    
-    let currentFrame = frameStart;
-
-    currentRenderProcess.stdout.on('data', (data) => {
-      const output = data.toString();
-      
-      // Parse Nuke progress
-      const frameMatch = output.match(/Frame\s+(\d+)/i) || output.match(/Writing\s+.*?(\d+)/i);
-      if (frameMatch) {
-        currentFrame = parseInt(frameMatch[1]);
-        mainWindow.webContents.send('render-progress', {
-          jobId,
-          frame: currentFrame,
-          currentFrameIndex: currentFrame - frameStart,
-          totalFrames: frames.length
-        });
-      }
-      
-      const savedMatch = output.match(/Writing\s+(.+)/i);
-      if (savedMatch) {
-        mainWindow.webContents.send('frame-rendered', {
-          jobId,
-          frame: currentFrame,
-          outputPath: savedMatch[1].trim(),
-          currentFrameIndex: currentFrame - frameStart,
-          totalFrames: frames.length
-        });
-      }
-
-      mainWindow.webContents.send('render-output', { jobId, output });
-    });
-
-    currentRenderProcess.stderr.on('data', (data) => {
-      mainWindow.webContents.send('render-output', { jobId, output: data.toString() });
-    });
-
-    currentRenderProcess.on('close', (code) => {
-      if (code === 0 || code === null) {
-        mainWindow.webContents.send('render-complete', { jobId });
-        currentRenderProcess = null;
-        resolve({ success: true });
-      } else if (!isPaused) {
-        mainWindow.webContents.send('render-error', {
-          jobId,
-          frame: currentFrame,
-          error: `Render process exited with code ${code}`
-        });
-        currentRenderProcess = null;
-        resolve({ success: false, error: `Exit code: ${code}` });
-      }
-    });
-
-    currentRenderProcess.on('error', (error) => {
-      mainWindow.webContents.send('render-error', {
-        jobId,
-        frame: currentFrame,
-        error: error.message
-      });
-      currentRenderProcess = null;
-      reject(error);
-    });
-  });
+/** Dependencies of NukeRenderJob (see electron/nukeRender.js). */
+function nukeJobDeps() {
+  return {
+    spawn: spawnTracked,
+    send: (channel, data) => mainWindow?.webContents?.send(channel, data),
+    kill: killProcessTree,
+    makeTempDir: makeTempDirSync,
+    removeDir: safeRmSync,
+    setCurrentProcess: (proc) => { currentRenderProcess = proc; },
+    // preview JPEGs outlive the render (the preview panel plays them back); a new render starts afresh
+    previewDir: (jobId, { reset }) => {
+      const dir = path.join(os.tmpdir(), 'renderq_previews', String(jobId || 'job').replace(/[^\w.-]/g, '_'));
+      if (reset) safeRmSync(dir);
+      ensureDirSync(dir);
+      return dir;
+    },
+    readPreview: async (jpgPath) => `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString('base64')}`,
+    log: (...args) => console.log(...args),
+  };
 }
+
+/**
+ * Start Nuke render (see electron/nukeRender.js): runs Nuke in terminal mode with the licence from the
+ * settings (or the one found automatically), rendering the chosen Write nodes' missing frames.
+ */
+async function startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume }) {
+  isPaused = false;
+  const job = new NukeRenderJob({
+    appPath, sceneFile, frameRanges, jobId, settings: appSettings || {}, resume: !!resume, deps: nukeJobDeps(),
+  });
+  currentRunnerJob = job;
+  try {
+    return await job.run();
+  } finally {
+    if (currentRunnerJob === job) currentRunnerJob = null;
+  }
+}
+
+ipcMain.handle('path-exists', async (event, p) => !!p && fs.existsSync(p));
+
+ipcMain.handle('detect-nuke-licenses', async (event, { appPath }) => {
+  try {
+    if (!appPath || !fs.existsSync(appPath)) return { success: false, error: 'Choose the Nuke executable first' };
+    return { success: true, results: await detectNukeLicenses({ appPath, deps: nukeJobDeps() }) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 
 /**
  * Start Maya render
@@ -2436,8 +2426,8 @@ ipcMain.handle('start-render', async (event, { blenderPath, blendFile, frameRang
 // Pause rendering
 ipcMain.handle('pause-render', async () => {
   isPaused = true;
-  if (currentBlenderJob) {
-    currentBlenderJob.pause();   // kills the current Blender process; finished frames stay on disk
+  if (currentRunnerJob) {
+    currentRunnerJob.pause();   // kills the current render process; finished frames stay on disk
   } else if (currentRenderProcess) {
     // On Windows, we need to kill the process to pause
     // The state will be preserved and can be resumed
@@ -2455,8 +2445,8 @@ ipcMain.handle('resume-render', async () => {
 // Stop rendering
 ipcMain.handle('stop-render', async () => {
   isPaused = false;
-  if (currentBlenderJob) {
-    currentBlenderJob.stop();
+  if (currentRunnerJob) {
+    currentRunnerJob.stop();
     currentRenderProcess = null;
   } else if (currentRenderProcess) {
     // On Windows, we need to kill the process tree

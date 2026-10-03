@@ -422,21 +422,50 @@
             <h3>Render Settings</h3>
             
             <div class="form-group">
-              <label class="form-label">Default Write Node (optional)</label>
-              <input 
-                type="text" 
-                class="form-input form-input--mono"
-                v-model="appSettings.nuke.writeNode"
-                placeholder="Write1"
+              <label class="form-label">Licence</label>
+              <select
+                class="form-input"
+                v-model="appSettings.nuke.licenseMode"
                 @change="saveAppSettings('nuke')"
-              />
-              <span class="form-hint">Leave empty to render all Write nodes</span>
+              >
+                <option value="auto">Auto (.nkind: Indie, .nknc: Non-commercial, .nk: first licence that works)</option>
+                <option value="nuke">Nuke</option>
+                <option value="nuke-interactive">Nuke - interactive licence (-i)</option>
+                <option value="nukex">NukeX</option>
+                <option value="nukex-interactive">NukeX - interactive licence (-i)</option>
+                <option value="indie">Nuke Indie</option>
+                <option value="nc">Nuke Non-commercial</option>
+              </select>
+              <span class="form-hint">Indie can only open .nkind comps and Non-commercial only .nknc/.nk; full Nuke cannot open either of those.</span>
+              <div style="margin-top: 8px;">
+                <button class="btn btn--secondary btn--sm" :disabled="nukeDetect.running" @click="detectNukeLicenses">
+                  {{ nukeDetect.running ? 'Checking licences…' : 'Detect licences' }}
+                </button>
+              </div>
+              <ul v-if="nukeDetect.results.length" class="form-hint" style="margin: 8px 0 0; padding-left: 18px;">
+                <li v-for="r in nukeDetect.results" :key="r.license">
+                  {{ r.ok ? '✓' : '✗' }} {{ r.label }}{{ r.ok ? ` (${r.version})` : ` - ${r.detail}` }}
+                </li>
+              </ul>
+              <span v-if="nukeDetect.error" class="form-hint" style="color: var(--color-error, #f87171);">{{ nukeDetect.error }}</span>
             </div>
-            
+
+            <label class="setting-toggle">
+              <input
+                type="checkbox"
+                :checked="appSettings.nuke.gpu !== false"
+                @change="appSettings.nuke.gpu = ($event.target as HTMLInputElement).checked; saveAppSettings('nuke')"
+              />
+              <span class="setting-toggle__label">
+                <span class="setting-toggle__title">Use GPU</span>
+                <span class="setting-toggle__desc">GPU nodes (ZDefocus, Kronos, BlinkScript…) use the GPU; without it Nuke's render mode runs them on the CPU</span>
+              </span>
+            </label>
+
             <div class="form-group">
               <label class="form-label">Threads</label>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 class="form-input"
                 v-model.number="appSettings.nuke.threads"
                 placeholder="0 (auto)"
@@ -444,18 +473,17 @@
                 @change="saveAppSettings('nuke')"
               />
             </div>
-            
-            <label class="setting-toggle">
-              <input 
-                type="checkbox" 
-                v-model="appSettings.nuke.continueOnError"
+
+            <div class="form-group">
+              <label class="form-label">Cache memory limit</label>
+              <input
+                type="text"
+                class="form-input form-input--mono"
+                v-model.trim="appSettings.nuke.cacheSize"
+                placeholder="Nuke default (e.g. 16G)"
                 @change="saveAppSettings('nuke')"
               />
-              <span class="setting-toggle__label">
-                <span class="setting-toggle__title">Continue on Error</span>
-                <span class="setting-toggle__desc">Continue rendering subsequent frames if one frame fails</span>
-              </span>
-            </label>
+            </div>
           </div>
         </div>
         
@@ -583,11 +611,30 @@ const appSettings = reactive({
     multiFrameRendering: false,
   },
   nuke: {
-    writeNode: '',
+    licenseMode: 'auto',
+    gpu: true,
     threads: 0,
-    continueOnError: false,
+    cacheSize: '',
   },
 });
+
+// Settings > Nuke > Detect licences
+const nukeDetect = reactive<{ running: boolean; results: any[]; error: string }>({ running: false, results: [], error: '' });
+
+async function detectNukeLicenses() {
+  const api = (window as any).electronAPI;
+  if (!api?.detectNukeLicenses) return;
+  nukeDetect.running = true;
+  nukeDetect.results = [];
+  nukeDetect.error = '';
+  try {
+    const result = await api.detectNukeLicenses({ appPath: settings.applicationPaths?.nuke || '' });
+    if (result.success) nukeDetect.results = result.results;
+    else nukeDetect.error = result.error;
+  } finally {
+    nukeDetect.running = false;
+  }
+}
 
 function getTabStyle(tab: typeof tabs[0]) {
   if (activeTab.value === tab.id && tab.color) {

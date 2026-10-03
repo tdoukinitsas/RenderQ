@@ -62,8 +62,8 @@ const DEFAULT_APP_SETTINGS: AppSpecificSettings = {
     },
   },
   nuke: {
-    continueOnError: false,
-    verbose: 1,
+    licenseMode: 'auto',
+    gpu: true,
     threads: 0,
   },
 };

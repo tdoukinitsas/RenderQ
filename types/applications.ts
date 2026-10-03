@@ -70,7 +70,7 @@ export const APPLICATION_INFO: Record<ApplicationType, ApplicationInfo> = {
     name: 'Nuke',
     label: 'Nuke',
     shortName: 'Nuke',
-    fileExtensions: ['.nk', '.nknc'],
+    fileExtensions: ['.nk', '.nknc', '.nkind'],
     color: '#fbbf24', // Yellow
     colorName: 'yellow',
   },
@@ -98,6 +98,7 @@ export const APPLICATION_FILE_EXTENSIONS: Record<string, ApplicationType> = {
   '.aepx': ApplicationType.AFTER_EFFECTS,
   '.nk': ApplicationType.NUKE,
   '.nknc': ApplicationType.NUKE,
+  '.nkind': ApplicationType.NUKE,
   '.ma': ApplicationType.MAYA,
   '.mb': ApplicationType.MAYA,
 };
@@ -382,8 +383,12 @@ export interface SceneInfo {
   viewLayers?: BlenderViewLayerInfo[];  // Blender
   pythonDriverCount?: number;           // Blender: drivers that need Python to evaluate
   takeName?: string;       // Cinema 4D
-  renderNode?: string;     // Houdini, Nuke
+  renderNode?: string;     // Houdini
   composition?: string;    // After Effects
+  writeNodes?: NukeWriteNodeInfo[];  // Nuke
+  loadErrors?: string[];             // Nuke: errors reported while loading the comp
+  nukeVersion?: string;
+  nukeLicense?: NukeLicenseMode;     // the licence mode that opened the comp
 }
 
 /**
@@ -451,14 +456,48 @@ export interface AfterEffectsRenderSettings {
   };
 }
 
+/** Nuke licence to run with ('auto': .nkind -> Indie, .nknc -> Non-commercial, .nk -> first licence that works) */
+export type NukeLicenseMode = 'auto' | 'nuke' | 'nuke-interactive' | 'nukex' | 'nukex-interactive' | 'indie' | 'nc';
+
 export interface NukeRenderSettings {
+  // Global (Settings > Nuke)
+  licenseMode?: NukeLicenseMode;
+  /** Let GPU nodes use the GPU (Nuke's terminal mode runs them on the CPU otherwise; default true) */
+  gpu?: boolean;
+  threads?: number;
+  /** Nuke cache memory limit, e.g. "16G" */
+  cacheSize?: string;
+  // Per job
+  /** Write nodes to render (undefined = the enabled ones in the comp) */
+  writes?: string[];
+  /** Skip frames whose output files already exist (default true) */
+  skipExisting?: boolean;
+  /** Render even when loading the comp reports errors, as the Nuke GUI does (default true) */
+  ignoreLoadErrors?: boolean;
+  /** Frames per Nuke process; 0/undefined = all frames in one process (Nuke loads the comp once) */
+  chunkSize?: number;
+  /** Python run inside Nuke after loading the comp; globals: nuke, tcl. Indie: keep to TCL (10 Node objects max) */
+  preRenderPython?: string;
+  /** legacy */
   writeNode?: string;
-  useNukeX?: boolean;
-  useNukeStudio?: boolean;
   continueOnError?: boolean;
   verbose?: number;
-  threads?: number;
-  cacheSize?: string;
+}
+
+/** A Write node of a Nuke comp (as probed by renderq_nuke.py) */
+export interface NukeWriteNodeInfo {
+  name: string;
+  class: string;
+  file: string;            // as typed, e.g. .../comp_####.exr
+  fileType: string;
+  disabled: boolean;
+  connected: boolean;
+  movie: boolean;
+  hasFrameNumber: boolean;
+  useLimit: boolean;
+  first: number | null;
+  last: number | null;
+  renderOrder: number;
 }
 
 export interface MayaRenderSettings {

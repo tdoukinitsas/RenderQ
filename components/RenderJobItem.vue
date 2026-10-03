@@ -287,6 +287,93 @@
         </div>
       </div>
 
+      <!-- Nuke-specific settings -->
+      <div v-else-if="job.applicationType === ApplicationType.NUKE" class="job-item__section">
+        <h5 class="job-item__section-title">Render Settings</h5>
+        <div v-if="job.nukeVersion" class="job-item__detail">
+          <label>Nuke</label>
+          <span>{{ job.nukeVersion }}{{ nukeLicenseLabel ? ` · ${nukeLicenseLabel}` : '' }}</span>
+        </div>
+
+        <!-- Write nodes -->
+        <div v-if="(job.writeNodes?.length || 0) > 0" class="job-item__subsection">
+          <label class="job-item__sublabel">Write Nodes</label>
+          <div class="job-item__layer-list">
+            <label
+              v-for="w in job.writeNodes"
+              :key="w.name"
+              class="checkbox"
+              :title="w.connected ? w.file : `${w.file} (no input: nothing to render)`"
+            >
+              <input
+                type="checkbox"
+                :checked="selectedWrites.includes(w.name)"
+                @change="toggleWrite(w.name, ($event.target as HTMLInputElement).checked)"
+                :disabled="job.status === 'rendering' || !w.connected"
+              />
+              <span>{{ w.name }} <span class="job-item__muted">{{ writeSummary(w) }}</span></span>
+            </label>
+          </div>
+          <p v-for="w in writesWithoutFrameNumber" :key="`nf-${w.name}`" class="job-item__warning">
+            {{ w.name }} writes "{{ baseName(w.file) }}": there is no frame number (####) in the file name, so every frame overwrites the same file.
+          </p>
+        </div>
+        <p v-else class="job-item__warning">No Write nodes found in this comp.</p>
+
+        <div class="job-item__detail-grid">
+          <div class="job-item__detail job-item__detail--editable">
+            <label>Frames per Nuke process</label>
+            <input
+              type="number"
+              class="form-input form-input--sm"
+              :value="nukeSettings.chunkSize || ''"
+              @change="updateJobSetting('chunkSize', parseInt(($event.target as HTMLInputElement).value) || undefined)"
+              :disabled="job.status === 'rendering'"
+              min="1"
+              placeholder="Auto (all in one process)"
+              title="Nuke loads the comp once per process. Smaller chunks restart Nuke now and then (frees memory on long renders)."
+            />
+          </div>
+        </div>
+
+        <div class="job-item__subsection">
+          <label class="checkbox" title="Frames whose output files already exist are not rendered again. Stop and start at any time: the render continues where it left off.">
+            <input
+              type="checkbox"
+              :checked="nukeSettings.skipExisting !== false"
+              @change="updateJobSetting('skipExisting', ($event.target as HTMLInputElement).checked ? undefined : false)"
+              :disabled="job.status === 'rendering' || nukeMovieSelected"
+            />
+            <span>Skip frames that are already rendered{{ nukeMovieSelected ? ' (not for movie output)' : '' }}</span>
+          </label>
+          <label class="checkbox" title="Render even if Nuke reports errors while loading the comp (e.g. a gizmo knob expression), as the Nuke GUI does. Off: such errors stop the job.">
+            <input
+              type="checkbox"
+              :checked="nukeSettings.ignoreLoadErrors !== false"
+              @change="updateJobSetting('ignoreLoadErrors', ($event.target as HTMLInputElement).checked ? undefined : false)"
+              :disabled="job.status === 'rendering'"
+            />
+            <span>Ignore errors while loading the comp (like the Nuke GUI)</span>
+          </label>
+          <p v-if="(job.loadErrors?.length || 0) > 0" class="job-item__warning">
+            Loading the comp reported: {{ (job.loadErrors || []).join('; ') }}
+          </p>
+        </div>
+
+        <details class="job-item__advanced" :open="!!nukeSettings.preRenderPython">
+          <summary>Pre-render Python</summary>
+          <textarea
+            class="form-input form-input--mono job-item__code"
+            rows="4"
+            :value="nukeSettings.preRenderPython || ''"
+            @change="updateJobSetting('preRenderPython', ($event.target as HTMLTextAreaElement).value.trim() || undefined)"
+            :disabled="job.status === 'rendering'"
+            placeholder="# runs inside Nuke after the comp is loaded&#10;# available: nuke, tcl(cmd) - e.g. tcl('knob Grade1.white 1.2')&#10;# Nuke Indie: use tcl(), it allows only 10 Python Node objects"
+            spellcheck="false"
+          ></textarea>
+        </details>
+      </div>
+
       <!-- Common info section -->
       <div class="job-item__detail-grid">
         <div class="job-item__detail">
@@ -299,8 +386,8 @@
         </div>
       </div>
 
-      <!-- Resolution override -->
-      <div class="job-item__section">
+      <!-- Resolution override (Nuke jobs render their Write nodes as set up in the comp) -->
+      <div v-if="job.applicationType !== ApplicationType.NUKE" class="job-item__section">
         <div class="job-item__frame-toggle">
           <label class="checkbox">
             <input 
@@ -381,8 +468,8 @@
         </div>
       </div>
 
-      <!-- Output path override -->
-      <div class="job-item__section">
+      <!-- Output path override (Nuke: the Write nodes' paths, listed above) -->
+      <div v-if="job.applicationType !== ApplicationType.NUKE" class="job-item__section">
         <div class="job-item__frame-toggle">
           <label class="checkbox">
             <input 
@@ -435,7 +522,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { RenderJob } from '~/stores/renderQueue';
-import { ApplicationType, APPLICATION_INFO, type BlenderRenderSettings } from '~/types/applications';
+import {
+  ApplicationType, APPLICATION_INFO, type BlenderRenderSettings, type NukeRenderSettings, type NukeWriteNodeInfo,
+} from '~/types/applications';
 import type { GpuCapabilities } from '~/types/electron';
 
 // Legacy type alias
@@ -532,6 +621,56 @@ function toggleViewLayer(name: string, checked: boolean) {
   const fileDefault = (props.job.viewLayers || []).filter(vl => vl.use).map(vl => vl.name);
   const same = chosen.length === fileDefault.length && chosen.every((n, i) => n === fileDefault[i]);
   updateBlenderSetting('viewLayers', same ? undefined : chosen);
+}
+
+// Nuke job options (unset keys = defaults: the comp's enabled Write nodes, one process, skip existing)
+const nukeSettings = computed<NukeRenderSettings>(() => (props.job.appSettings || {}) as NukeRenderSettings);
+
+const NUKE_LICENSE_LABELS: Record<string, string> = {
+  nuke: 'Nuke', 'nuke-interactive': 'Nuke (interactive licence)', nukex: 'NukeX',
+  'nukex-interactive': 'NukeX (interactive licence)', indie: 'Indie', nc: 'Non-commercial',
+};
+const nukeLicenseLabel = computed(() => NUKE_LICENSE_LABELS[props.job.nukeLicense || ''] || '');
+
+const selectedWrites = computed<string[]>(() => {
+  const chosen = nukeSettings.value.writes;
+  if (chosen?.length) return chosen;
+  return (props.job.writeNodes || []).filter(w => !w.disabled && w.connected).map(w => w.name);
+});
+
+const selectedWriteInfos = computed(() => (props.job.writeNodes || []).filter(w => selectedWrites.value.includes(w.name)));
+const writesWithoutFrameNumber = computed(() => selectedWriteInfos.value.filter(w => !w.movie && !w.hasFrameNumber));
+const nukeMovieSelected = computed(() => selectedWriteInfos.value.some(w => w.movie));
+
+function writeSummary(w: NukeWriteNodeInfo) {
+  const parts = [w.fileType || w.class];
+  if (w.disabled) parts.push('disabled in comp');
+  if (!w.connected) parts.push('no input');
+  if (w.useLimit) parts.push(`frames ${w.first}-${w.last}`);
+  return parts.join(' · ');
+}
+
+function baseName(p: string) {
+  return String(p || '').split(/[\\/]/).pop() || p;
+}
+
+function updateJobSetting(key: string, value: any) {
+  const next: any = { ...(props.job.appSettings || {}) };
+  if (value === undefined) delete next[key];
+  else next[key] = value;
+  emit('update', { appSettings: Object.keys(next).length > 0 ? next : undefined });
+}
+
+function toggleWrite(name: string, checked: boolean) {
+  const all = (props.job.writeNodes || []).map(w => w.name);
+  const set = new Set(selectedWrites.value);
+  if (checked) set.add(name);
+  else set.delete(name);
+  if (set.size === 0) return;   // at least one Write node
+  const chosen = all.filter(n => set.has(n));
+  const compDefault = (props.job.writeNodes || []).filter(w => !w.disabled && w.connected).map(w => w.name);
+  const same = chosen.length === compDefault.length && chosen.every((n, i) => n === compDefault[i]);
+  updateJobSetting('writes', same ? undefined : chosen);
 }
 
 // Methods for updating Blender settings
@@ -1116,6 +1255,11 @@ onUnmounted(() => {
     font-size: $font-size-xs;
     color: $status-paused;
     margin: 0;
+  }
+
+  &__muted {
+    opacity: 0.6;
+    font-size: $font-size-xs;
   }
 
   &__advanced {

@@ -199,6 +199,8 @@ export interface ElectronAPI {
   findHoudiniInstallations(): Promise<AppInstallation[]>;
   findAfterEffectsInstallations(): Promise<AppInstallation[]>;
   findNukeInstallations(): Promise<AppInstallation[]>;
+  pathExists(p: string): Promise<boolean>;
+  detectNukeLicenses(params: { appPath: string }): Promise<{ success: boolean; results?: { license: string; label: string; ok: boolean; version?: string; detail?: string }[]; error?: string }>;
   findMayaInstallations(): Promise<AppInstallation[]>;
   
   // Browse (unified)
@@ -206,7 +208,7 @@ export interface ElectronAPI {
   browseSceneFiles(appTypes?: ApplicationType[]): Promise<string[]>;
   
   // Scene Info (unified)
-  getSceneInfo(params: { appPath: string; sceneFile: string; appType?: ApplicationType }): Promise<SceneInfo>;
+  getSceneInfo(params: { appPath: string; sceneFile: string; appType?: ApplicationType; appSettings?: any }): Promise<SceneInfo>;
   
   // Rendering (unified)
   startAppRender(params: AppRenderParams): Promise<{ success: boolean; error?: string }>;

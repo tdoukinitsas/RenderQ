@@ -5,6 +5,7 @@ import {
   type AppInstallation,
   type ApplicationRenderSettings,
   type BlenderViewLayerInfo,
+  type NukeWriteNodeInfo,
 } from '~/types/applications';
 
 /**
@@ -80,7 +81,12 @@ export interface RenderJob {
   renderSettingsTemplate?: string;
   outputModuleTemplate?: string;
   // Nuke
-  writeNode?: string;
+  writeNode?: string;                    // legacy
+  writeNodes?: NukeWriteNodeInfo[];      // from the comp
+  loadErrors?: string[];                 // errors Nuke reported while loading the comp
+  nukeVersion?: string;
+  nukeLicense?: string;
+  lastPreviewPath?: string | null;       // preview JPEG of the last rendered frame (Nuke)
 }
 
 // Legacy type alias for backwards compatibility
@@ -507,6 +513,11 @@ export const useRenderQueueStore = defineStore('renderQueue', {
           renderSettingsTemplate: job.renderSettingsTemplate,
           outputModuleTemplate: job.outputModuleTemplate,
           writeNode: job.writeNode,
+          writeNodes: job.writeNodes,
+          loadErrors: job.loadErrors,
+          nukeVersion: job.nukeVersion,
+          nukeLicense: job.nukeLicense,
+          lastPreviewPath: job.status === 'complete' ? job.lastPreviewPath : null,
         }));
         
         try {

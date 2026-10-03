@@ -245,8 +245,8 @@
 
           <div class="app-card app-card--nuke">
             <h3>Nuke</h3>
-            <p class="extensions">.nk, .nknc</p>
-            <p>Render Write nodes with full frame range control.</p>
+            <p class="extensions">.nk, .nknc, .nkind</p>
+            <p>Nuke, NukeX, Indie and Non-commercial (licence detected automatically). Pick the Write nodes per job, skip frames already rendered, and watch a live preview of every finished frame.</p>
           </div>
 
           <div class="app-card app-card--maya">

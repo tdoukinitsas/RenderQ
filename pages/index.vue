@@ -999,8 +999,8 @@ watch(() => renderQueue.selectedJobId, async (newId) => {
   }
 });
 
-// Watch for new rendered frames on currently selected job
-watch(() => renderQueue.previewJob?.lastRenderedFrame, async (newFrame) => {
+// Watch for new rendered frames on currently selected job (Nuke jobs: the frame's preview JPEG, not its EXR)
+watch(() => renderQueue.previewJob?.lastPreviewPath || renderQueue.previewJob?.lastRenderedFrame, async (newFrame) => {
   if (!renderQueue.isSequencePlayback && newFrame && currentPreviewJob.value && previewEnabled.value) {
     // Only auto-update if viewing the job that's rendering
     if (!renderQueue.selectedJobId || renderQueue.selectedJobId === renderQueue.currentJob?.id) {
@@ -1011,8 +1011,9 @@ watch(() => renderQueue.previewJob?.lastRenderedFrame, async (newFrame) => {
 
 // Watch for preview enabled/disabled changes
 watch(previewEnabled, async (enabled) => {
-  if (enabled && renderQueue.previewJob?.lastRenderedFrame) {
-    await loadPreviewImage(renderQueue.previewJob.lastRenderedFrame);
+  const job = renderQueue.previewJob;
+  if (enabled && (job?.lastPreviewPath || job?.lastRenderedFrame)) {
+    await loadPreviewImage(job.lastPreviewPath || job.lastRenderedFrame!);
   } else if (!enabled) {
     currentPreviewImage.value = null;
     previewUnsupportedPath.value = null;
@@ -1067,8 +1068,10 @@ async function loadPreviewForJob(jobId: string) {
       videoPreviewSrc.value = null;
     }
   } else {
-    // Load last rendered frame
-    if (job.lastRenderedFrame) {
+    // Load last rendered frame (Nuke jobs: its preview JPEG)
+    if (job.lastPreviewPath) {
+      await loadPreviewImage(job.lastPreviewPath);
+    } else if (job.lastRenderedFrame) {
       await loadPreviewImage(job.lastRenderedFrame);
     } else if (framePaths.length > 0) {
       await loadPreviewImage(framePaths[framePaths.length - 1]);
@@ -1273,8 +1276,12 @@ onMounted(async () => {
       settings.setAppPath(ApplicationType.AFTER_EFFECTS, aeInstalls[0].commandLinePath || aeInstalls[0].path);
     }
     
-    if (!settings.applicationPaths?.nuke && nukeInstalls?.length > 0) {
-      settings.setAppPath(ApplicationType.NUKE, nukeInstalls[0].commandLinePath || nukeInstalls[0].path);
+    // Nuke: also replace a saved path whose version has been uninstalled (newest detected version)
+    const savedNuke = settings.applicationPaths?.nuke;
+    if (nukeInstalls?.length > 0 && (!savedNuke || (api.pathExists && !(await api.pathExists(savedNuke))))) {
+      const newest = [...nukeInstalls].sort((a: any, b: any) =>
+        String(b.version).localeCompare(String(a.version), undefined, { numeric: true }))[0];
+      settings.setAppPath(ApplicationType.NUKE, newest.commandLinePath || newest.path);
     }
 
     // Migrate any old per-job After Effects override paths (AfterFX.exe -> aerender.exe)
@@ -1417,9 +1424,10 @@ function setupRenderListeners() {
       // Update frame timing and progress
       const job = renderQueue.currentJob;
       if (data.doneCount !== undefined) {
-        // Blender jobs: progress/ETA come with render-progress; only record the frame here
-        renderQueue.updateJob(data.jobId, { lastRenderedFrame: data.outputPath });
-        renderQueue.addRenderedFrame(data.jobId, data.outputPath);
+        // Blender/Nuke jobs: progress/ETA come with render-progress; only record the frame here.
+        // Nuke jobs send a preview JPEG per frame: playback uses those (no EXR decoding needed).
+        renderQueue.updateJob(data.jobId, { lastRenderedFrame: data.outputPath, lastPreviewPath: data.previewPath || null });
+        renderQueue.addRenderedFrame(data.jobId, data.previewPath || data.outputPath);
       } else if (job.renderStartTime) {
         const elapsed = Date.now() - job.renderStartTime;
         const framesComplete = data.currentFrameIndex + 1;
@@ -1456,8 +1464,8 @@ function setupRenderListeners() {
           }
         }
         
-        // Get EXR layers if this is an EXR file
-        if (data.outputPath.toLowerCase().endsWith('.exr') && (job.exrLayers?.length ?? 0) === 0) {
+        // Get EXR layers if this is an EXR file (not for Nuke jobs: their preview is a JPEG of the comp)
+        if (!data.previewPath && data.outputPath.toLowerCase().endsWith('.exr') && (job.exrLayers?.length ?? 0) === 0) {
           const layerResult = await api.getExrLayers({
             blenderPath: renderQueue.blenderPath,
             exrPath: data.outputPath
@@ -1668,7 +1676,7 @@ async function handleDrop(e: DragEvent) {
   if (!e.dataTransfer?.files) return;
   
   // All supported extensions
-  const supportedExtensions = ['.blend', '.c4d', '.hip', '.hiplc', '.hipnc', '.aep', '.aepx', '.nk', '.nknc'];
+  const supportedExtensions = ['.blend', '.c4d', '.hip', '.hiplc', '.hipnc', '.aep', '.aepx', '.nk', '.nknc', '.nkind'];
   
   const files = Array.from(e.dataTransfer.files)
     .filter(file => {
@@ -1828,6 +1836,8 @@ async function loadSceneFiles(filePaths: string[]) {
           appPath,
           sceneFile: filePath,
           appType,
+          // Nuke: the licence to open the comp with
+          appSettings: JSON.parse(JSON.stringify((settings.appSettings as any)?.[appType] || {})),
         });
         
         if (!info.success) {
@@ -1861,6 +1871,10 @@ async function loadSceneFiles(filePaths: string[]) {
         isVideoOutput: info.isVideoOutput || false,
         viewLayers: info.viewLayers,
         pythonDriverCount: info.pythonDriverCount,
+        writeNodes: info.writeNodes,
+        loadErrors: info.loadErrors,
+        nukeVersion: info.nukeVersion,
+        nukeLicense: info.nukeLicense,
       });
     } catch (error) {
       console.error('Error loading scene file:', error);
@@ -1961,8 +1975,9 @@ async function checkAndStartJob(job: RenderJob) {
 
   if (frames.length === 0) return;
 
-  // Blender skips frames that are already rendered by itself (unless the job is set to overwrite)
-  if (job.applicationType === ApplicationType.BLENDER && (job.appSettings as any)?.skipExisting !== false) {
+  // Blender and Nuke jobs skip frames that are already rendered by themselves (unless set to overwrite)
+  if ((job.applicationType === ApplicationType.BLENDER || job.applicationType === ApplicationType.NUKE) &&
+      (job.appSettings as any)?.skipExisting !== false) {
     startJobRender(job);
     return;
   }
@@ -2080,12 +2095,11 @@ function getAppSettingsForJob(job: RenderJob): any {
         ...jobSettings,
         composition: job.composition || globalSettings.composition,
       };
-    case ApplicationType.NUKE:
-      return {
-        ...globalSettings,
-        ...jobSettings,
-        writeNode: job.writeNode || globalSettings.writeNode,
-      };
+    case ApplicationType.NUKE: {
+      // global: licence, GPU, threads, cache; per job: Write nodes, skip existing, chunks...
+      const { writeNode: _w, continueOnError: _c, verbose: _v, ...globalRest } = globalSettings;
+      return { ...globalRest, ...jobSettings };
+    }
     default:
       return { ...globalSettings, ...jobSettings };
   }

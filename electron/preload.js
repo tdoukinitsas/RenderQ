@@ -16,6 +16,8 @@ window.electronAPI = {
   findHoudiniInstallations: () => ipcRenderer.invoke('find-houdini-installations'),
   findAfterEffectsInstallations: () => ipcRenderer.invoke('find-aftereffects-installations'),
   findNukeInstallations: () => ipcRenderer.invoke('find-nuke-installations'),
+  detectNukeLicenses: (params) => ipcRenderer.invoke('detect-nuke-licenses', params),
+  pathExists: (p) => ipcRenderer.invoke('path-exists', p),
   findMayaInstallations: () => ipcRenderer.invoke('find-maya-installations'),
   
   // Browse (unified)
