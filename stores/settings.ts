@@ -31,6 +31,8 @@ export interface SettingsState {
   // General settings
   autoSave: boolean;
   notifications: boolean;
+  /** A failed job doesn't stop the queue, a frame that fails twice is skipped (Blender, Nuke) */
+  continueOnRenderErrors: boolean;
   showPreview: boolean;
   previewScale: number;
   
@@ -80,6 +82,7 @@ export const useSettingsStore = defineStore('settings', {
     // General
     autoSave: true,
     notifications: true,
+    continueOnRenderErrors: true,
     showPreview: true,
     previewScale: 100,
     
@@ -148,6 +151,7 @@ export const useSettingsStore = defineStore('settings', {
           // General settings
           this.autoSave = settings.autoSave !== false;
           this.notifications = settings.notifications !== false;
+          this.continueOnRenderErrors = settings.continueOnRenderErrors !== false;
           this.showPreview = settings.showPreview !== false;
           this.previewScale = settings.previewScale || 100;
           
@@ -175,6 +179,7 @@ export const useSettingsStore = defineStore('settings', {
           // General
           autoSave: this.autoSave,
           notifications: this.notifications,
+          continueOnRenderErrors: this.continueOnRenderErrors,
           showPreview: this.showPreview,
           previewScale: this.previewScale,
           
@@ -269,6 +274,11 @@ export const useSettingsStore = defineStore('settings', {
 
     toggleNotifications() {
       this.notifications = !this.notifications;
+      this.saveSettings();
+    },
+
+    toggleContinueOnRenderErrors() {
+      this.continueOnRenderErrors = !this.continueOnRenderErrors;
       this.saveSettings();
     },
 

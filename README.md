@@ -36,6 +36,7 @@ Built with AI Assistance from Github Copilot using Claude Opus 4.5, Claude Sonne
 - **Flexible Layout**: Panels keep their proportions when the window is resized, can be collapsed, and the layout is remembered between sessions (double-click a divider to reset it)
 - **Keyboard & Accessibility**: Shortcuts for everything (press `?` for the list), keyboard-resizable dividers, screen-reader labels and announcements, visible focus rings, reduced-motion support
 - **Pause/Resume**: Stop rendering mid-queue and resume later
+- **Unattended Renders**: An error doesn't end an overnight session. A failed job doesn't stop the queue, and Blender and Nuke skip a frame that keeps failing instead of giving up on the job (Settings > General > Continue past render errors)
 - **Queue Persistence**: 
   - Auto-saves queue to recover from crashes
   - Save/load queue to JSON files
@@ -104,6 +105,15 @@ Each application has its own settings tab:
 2. Use "Pause" to temporarily stop rendering
 3. Use "Stop" to cancel the current render
 4. Jobs with missing applications are automatically skipped with an error
+5. A job that fails is marked with its error and the queue carries on with the next one (turn off **Continue past render errors** in Settings to stop the queue instead)
+
+### When a Frame Fails (Blender and Nuke)
+With **Continue past render errors** on (the default):
+- When Blender or Nuke exits or reports an error on a frame, the render continues from that frame.
+- A frame that fails twice is skipped and the render carries on with the next one.
+- Before the job ends, the skipped frames get one more try, so the next job in the queue (say, a Nuke comp reading this job's EXRs) starts with as many frames as possible.
+- Frames that still fail leave the job **Complete** with a warning listing them. Reset the job and render it again to fill the gaps; with "Skip frames that are already rendered" on, only the missing frames are rendered.
+- Movie outputs can't continue part way: a failed movie fails the job, and the queue moves on.
 
 ### Blender Jobs
 - Blender loads the file once per run of frames (`-s … -e … -a`), not once per frame. Movie outputs are always written in a single run.
@@ -112,7 +122,7 @@ Each application has its own settings tab:
 - **Allow Python drivers & scripts** (on by default): the file's Python drivers and scripts run, as in Blender with auto-run enabled. The job card warns when a file has Python drivers and scripts are off.
 - Renders use your Blender preferences and add-ons (GPU devices included); **Factory startup** ignores them.
 - **Pre-render Python**: code run inside Blender before rendering, with `bpy`, `scene` and `layer` (the view layer of a split render) available, e.g. to call a set-up script stored in the file.
-- A process that crashes after it started rendering is retried twice from the frame it stopped at.
+- A process that crashes while rendering continues from the frame it stopped at (see [When a Frame Fails](#when-a-frame-fails-blender-and-nuke)).
 
 ### Overwrite Warning
 For Blender jobs this appears only when "Skip frames that are already rendered" is off.

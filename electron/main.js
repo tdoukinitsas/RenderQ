@@ -1827,13 +1827,13 @@ async function getMayaSceneInfo(sceneFile) {
 /**
  * Start rendering for any application type
  */
-ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRanges, jobId, appType, appSettings, resume }) => {
+ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRanges, jobId, appType, appSettings, resume, skipFailedFrames }) => {
   // Determine app type from file extension if not provided
   const detectedAppType = appType || getAppTypeFromExtension(sceneFile);
 
   switch (detectedAppType) {
     case ApplicationType.BLENDER:
-      return startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume });
+      return startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume, skipFailedFrames });
     case ApplicationType.CINEMA4D:
       return startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     case ApplicationType.HOUDINI:
@@ -1841,7 +1841,7 @@ ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRang
     case ApplicationType.AFTER_EFFECTS:
       return startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     case ApplicationType.NUKE:
-      return startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume });
+      return startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume, skipFailedFrames });
     case ApplicationType.MAYA:
       return startMayaRender({ appPath, sceneFile, frameRanges, jobId, appSettings });
     default:
@@ -1853,7 +1853,7 @@ ipcMain.handle('start-app-render', async (event, { appPath, sceneFile, frameRang
  * Start Blender render (see electron/blenderRender.js): probes the file for finished frames, then renders the
  * missing ones with one Blender process per contiguous run / chunk / view layer.
  */
-async function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume }) {
+async function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume, skipFailedFrames }) {
   isPaused = false;
   const job = new BlenderRenderJob({
     appPath,
@@ -1862,6 +1862,7 @@ async function startBlenderRender({ appPath, sceneFile, frameRanges, jobId, appS
     jobId,
     settings: appSettings || {},
     resume: !!resume,
+    skipFailedFrames: !!skipFailedFrames,
     deps: {
       spawn: spawnTracked,
       send: (channel, data) => mainWindow?.webContents?.send(channel, data),
@@ -2279,10 +2280,11 @@ function nukeJobDeps() {
  * Start Nuke render (see electron/nukeRender.js): runs Nuke in terminal mode with the licence from the
  * settings (or the one found automatically), rendering the chosen Write nodes' missing frames.
  */
-async function startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume }) {
+async function startNukeRender({ appPath, sceneFile, frameRanges, jobId, appSettings, resume, skipFailedFrames }) {
   isPaused = false;
   const job = new NukeRenderJob({
-    appPath, sceneFile, frameRanges, jobId, settings: appSettings || {}, resume: !!resume, deps: nukeJobDeps(),
+    appPath, sceneFile, frameRanges, jobId, settings: appSettings || {}, resume: !!resume,
+    skipFailedFrames: !!skipFailedFrames, deps: nukeJobDeps(),
   });
   currentRunnerJob = job;
   try {

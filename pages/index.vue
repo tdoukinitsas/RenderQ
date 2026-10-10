@@ -763,6 +763,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRenderQueueStore, type RenderJob, type JobMenuAction } from '~/stores/renderQueue';
 import { useSystemMonitorStore } from '~/stores/systemMonitor';
 import { useSettingsStore } from '~/stores/settings';
+import { framesToRangeString } from '~/utils/helpers';
 import { ApplicationType, APPLICATION_FILE_EXTENSIONS, getAppTypeFromExtension, APPLICATION_INFO } from '~/types/applications';
 
 // Legacy type alias
@@ -773,7 +774,7 @@ const systemMonitor = useSystemMonitorStore();
 const settings = useSettingsStore();
 
 // App version from package.json (fetched via Electron)
-const appVersion = ref('2.5.1');
+const appVersion = ref('2.5.2');
 
 const showSettings = ref(false);
 const overwriteWarning = ref<{ job: RenderJob; existingFrames: any[] } | null>(null);
@@ -2386,6 +2387,10 @@ function setupRenderListeners() {
         if (data.layer !== undefined) updateData.currentLayer = data.layer;
         if (data.frame !== undefined) updateData.currentFrameNumber = data.frame;
         if (data.frameDone) { updateData.currentSample = 0; updateData.totalSamples = 0; }
+        if (data.failedFrames !== undefined) {
+          updateData.failedFrames = data.failedFrames;
+          updateData.failedFramesError = data.failedFramesError ?? null;
+        }
         if (data.renderedCount > 0 && data.elapsedMs !== undefined) {
           const avg = data.elapsedMs / data.renderedCount;   // only frames rendered in this session
           updateData.elapsedTime = data.elapsedMs;
@@ -2491,49 +2496,67 @@ function setupRenderListeners() {
   }
   
   api.onRenderComplete((data: any) => {
-    renderQueue.completeCurrentJob();
+    const failedFrames: number[] = data.failedFrames ?? [];
+    renderQueue.completeCurrentJob({ failedFrames, failedFramesError: data.failedFramesError ?? null });
     const finishedName = renderQueue.jobs.find(j => j.id === data.jobId)?.fileName || 'job';
-    announce(`Finished rendering ${finishedName}`);
+    const skipped = failedFrames.length
+      ? ` - ${failedFrames.length} frame${failedFrames.length === 1 ? '' : 's'} failed and ${failedFrames.length === 1 ? 'was' : 'were'} skipped (${framesToRangeString(failedFrames)})`
+      : '';
+    announce(`Finished rendering ${finishedName}${skipped}`, !!skipped);
 
     // Send notification
     if (settings.notifications) {
       api.showNotification({
-        title: 'Render Complete',
-        message: `Finished rendering ${finishedName}`,
+        title: skipped ? 'Render Complete With Skipped Frames' : 'Render Complete',
+        message: `Finished rendering ${finishedName}${skipped}`,
       });
     }
 
-    // Start next job if available
-    if (renderQueue.pendingJobs.length > 0 && renderQueue.isRendering) {
-      startNextJob();
-    } else if (renderQueue.pendingJobs.length === 0) {
-      renderQueue.isRendering = false;
-      announce('All render jobs are complete');
-      if (settings.notifications) {
-        api.showNotification({
-          title: 'Queue Complete',
-          message: 'All render jobs have been completed!',
-        });
-      }
-    }
+    continueQueue();
   });
   
   api.onRenderError((data: any) => {
     const failedName = renderQueue.currentJob?.fileName;
-    renderQueue.errorCurrentJob(data.error);
+    // a failed job doesn't stop the queue (unless turned off in Settings): the next one may still render
+    const keepGoing = settings.continueOnRenderErrors && renderQueue.isRendering;
+    renderQueue.errorCurrentJob(data.error, { continueQueue: keepGoing });
     announce(`Render error${failedName ? ` in ${failedName}` : ''}: ${data.error}`, true);
 
     if (settings.notifications) {
       api.showNotification({
         title: 'Render Error',
-        message: data.error,
+        message: `${failedName ? `${failedName}: ` : ''}${data.error}${keepGoing ? ' - continuing with the next job' : ''}`,
       });
     }
+
+    if (keepGoing) continueQueue();
   });
   
   api.onRenderPaused((data: any) => {
     renderQueue.updateJob(data.jobId, { status: 'paused' });
   });
+}
+
+/** After a job finished or failed: start the next pending job, or report the queue as done */
+function continueQueue() {
+  if (renderQueue.pendingJobs.length > 0) {
+    if (renderQueue.isRendering) startNextJob();
+    return;
+  }
+  renderQueue.isRendering = false;
+  const failedJobs = renderQueue.jobs.filter(j => j.status === 'error').length;
+  const skippedFrames = renderQueue.jobs.reduce((n, j) => n + (j.status === 'complete' ? j.failedFrames?.length ?? 0 : 0), 0);
+  const problems = [
+    failedJobs ? `${failedJobs} job${failedJobs === 1 ? '' : 's'} failed` : '',
+    skippedFrames ? `${skippedFrames} frame${skippedFrames === 1 ? '' : 's'} skipped` : '',
+  ].filter(Boolean).join(', ');
+  announce(problems ? `Render queue finished: ${problems}` : 'All render jobs are complete', !!problems);
+  if (settings.notifications) {
+    (window as any).electronAPI.showNotification({
+      title: 'Queue Complete',
+      message: problems ? `Render queue finished: ${problems}.` : 'All render jobs have been completed!',
+    });
+  }
 }
 
 function cleanupRenderListeners() {
@@ -3017,7 +3040,7 @@ function startJobRender(job: RenderJob, { resume = false }: { resume?: boolean }
     // keep the queue position; the job itself continues from what is already rendered
     renderQueue.isRendering = true;
     renderQueue.isPaused = false;
-    renderQueue.updateJob(job.id, { status: 'rendering', renderStartTime: Date.now(), error: null });
+    renderQueue.updateJob(job.id, { status: 'rendering', renderStartTime: Date.now(), error: null, failedFrames: [], failedFramesError: null });
     announce(`Resumed rendering ${job.fileName}`);
   } else {
     renderQueue.startRendering();
@@ -3030,6 +3053,8 @@ function startJobRender(job: RenderJob, { resume = false }: { resume?: boolean }
       estimatedTimeRemaining: 0,
       frameTimes: [],
       error: null,
+      failedFrames: [],
+      failedFramesError: null,
     });
   }
 
@@ -3050,6 +3075,7 @@ function startJobRender(job: RenderJob, { resume = false }: { resume?: boolean }
       appType,
       appSettings: getAppSettingsForJob(job),
       resume,
+      skipFailedFrames: settings.continueOnRenderErrors,
     }));
     api.startAppRender(renderParams);
   } else {

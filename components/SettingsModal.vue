@@ -58,6 +58,18 @@
             <label class="setting-toggle">
               <input 
                 type="checkbox" 
+                :checked="settings.continueOnRenderErrors"
+                @change="settings.toggleContinueOnRenderErrors()"
+              />
+              <span class="setting-toggle__label">
+                <span class="setting-toggle__title">Continue past render errors</span>
+                <span class="setting-toggle__desc">A failed job doesn't stop the queue. Blender and Nuke retry a failed frame once, then skip it and carry on; skipped frames get one more try before the job ends, so later jobs that use them aren't left short</span>
+              </span>
+            </label>
+            
+            <label class="setting-toggle">
+              <input 
+                type="checkbox" 
                 :checked="settings.showPreview"
                 @change="settings.togglePreview()"
               />

@@ -571,6 +571,17 @@
         </svg>
         <span>{{ job.error }}</span>
       </div>
+
+      <!-- Frames skipped after failing (the job carried on without them) -->
+      <div v-if="!job.error && failedFramesText" class="job-item__warning" role="status" :title="job.failedFramesError || undefined">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+        </svg>
+        <span>
+          {{ failedFramesText }}
+          <template v-if="job.failedFramesError"><br />{{ job.failedFramesError }}</template>
+        </span>
+      </div>
     </div>
   </div>
 </template>
@@ -578,6 +589,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { RenderJob, JobMenuAction } from '~/stores/renderQueue';
+import { framesToRangeString } from '~/utils/helpers';
 import {
   ApplicationType, APPLICATION_INFO, type BlenderRenderSettings, type NukeRenderSettings, type NukeWriteNodeInfo,
 } from '~/types/applications';
@@ -856,6 +868,16 @@ function updateCustomOutputPath(event: Event) {
     },
   });
 }
+
+const failedFramesText = computed(() => {
+  const frames = props.job.failedFrames ?? [];
+  if (!frames.length) return '';
+  const n = frames.length;
+  const what = `${n} frame${n === 1 ? '' : 's'} failed twice and ${n === 1 ? 'was' : 'were'} skipped: ${framesToRangeString(frames)}.`;
+  return props.job.status === 'complete'
+    ? `${what} Reset the job and render it again to fill the gap${n === 1 ? '' : 's'}.`
+    : what;
+});
 
 const statusLabel = computed(() => {
   switch (props.job.status) {
@@ -1418,6 +1440,28 @@ onUnmounted(() => {
     span {
       font-size: $font-size-xs;
       word-break: break-word;
+    }
+  }
+  
+  &__warning {
+    display: flex;
+    align-items: flex-start;
+    gap: $spacing-03;
+    padding: $spacing-03;
+    margin-top: $spacing-04;
+    background-color: rgba($status-rendering, 0.1);
+    border-radius: $radius-md;
+    color: $status-rendering;
+
+    svg {
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    span {
+      font-size: $font-size-xs;
+      word-break: break-word;
+      white-space: pre-line;
     }
   }
   

@@ -12,6 +12,9 @@
  * Some nodes only load in the Nuke GUI (an Indie .gzind gizmo Indie refuses in terminal mode, a gizmo
  * whose folder only menu.py adds to the plugin path): the probe runs in terminal mode and, when it could
  * not create a node, the job renders in GUI mode with Qt's offscreen platform, so no window opens.
+ * With skipFailedFrames, a frame that fails is tried again and then skipped (by the helper when Nuke reports
+ * an error, here when Nuke exits on it). Skipped frames get one more try at the end of the job (a later job in
+ * the queue may depend on them); those that fail again are reported as failed. A failing movie fails the job.
  *
  * Nothing in here depends on Electron; main.js injects process spawning, IPC sending and previews.
  */
@@ -20,7 +23,8 @@ const path = require('path');
 const { parseFrameRanges, contiguousRuns } = require('./blenderRender');
 
 const HELPER_SOURCE = path.join(__dirname, 'renderq_nuke.py');
-const MAX_RETRIES = 2;   // per process, only after it reached the "ready" line
+const FRAME_ATTEMPTS = 2;   // a frame Nuke exits on this many times is skipped
+const START_ATTEMPTS = 2;   // processes that exit before the "ready" line (the probe opened the comp)
 
 /** Licence modes: settings value -> Nuke flags. */
 const LICENSE_FLAGS = {
@@ -66,6 +70,7 @@ class NukeRenderJob {
    * @param {object} o.settings      { licenseMode, gpu, threads, cacheSize, writes[], skipExisting,
    *                                  ignoreLoadErrors, chunkSize, preRenderPython, previewWidth }
    * @param {boolean} o.resume       continue a paused job (keeps this session's finished frames)
+   * @param {boolean} o.skipFailedFrames  skip a frame that keeps failing instead of failing the job
    * @param {object} o.deps          { spawn(cmd,args,opts,meta), send(channel,data), kill(proc),
    *                                  makeTempDir(prefix), removeDir(dir), previewDir?(jobId,{reset}),
    *                                  readPreview?(path), setCurrentProcess?(proc|null), log?(...args) }
@@ -77,9 +82,11 @@ class NukeRenderJob {
     this.settings = o.settings || {};
     this.frames = parseFrameRanges(o.frameRanges);
     this.resume = !!o.resume;
+    this.skipFailedFrames = !!o.skipFailedFrames;
     this.deps = o.deps;
     this.state = 'idle';   // running | paused | stopped | done | error
     this.proc = null;
+    this.failed = [];      // { frame, error } skipped after failing FRAME_ATTEMPTS times
   }
 
   // ---------------------------------------------------------------- control
@@ -104,6 +111,7 @@ class NukeRenderJob {
       skipExisting: s.skipExisting !== false,
       ignoreLoadErrors: s.ignoreLoadErrors !== false,
       preRenderPython: s.preRenderPython || '',
+      skipFailedFrames: this.skipFailedFrames,
       ...extra,
     };
   }
@@ -133,7 +141,7 @@ class NukeRenderJob {
   }
 
   /**
-   * Run one Nuke process; resolves { code, err, tail, ready, licenseError, unloadable, timedOut } when it
+   * Run one Nuke process; resolves { code, err, tail, ready, movie, licenseError, unloadable, timedOut } when it
    * exits. `unloadable` lists load errors of nodes Nuke could not create (missing / refused gizmos).
    * readyTimeoutMs: kill the process when the helper has not started by then (a hidden GUI dialog).
    */
@@ -147,6 +155,7 @@ class NukeRenderJob {
       const tail = [];
       const unloadable = [];
       let ready = false;
+      let movie = false;   // writing a movie (can't continue part way)
       let licenseError = null;
       let timedOut = false;
       const timer = readyTimeoutMs > 0 ? setTimeout(() => { timedOut = true; this.deps.kill(proc); }, readyTimeoutMs) : null;
@@ -157,6 +166,7 @@ class NukeRenderJob {
         tail.push(line);
         if (tail.length > 60) tail.shift();
         if (/^RENDERQ(: ready|_PROBE:)/.test(line)) { ready = true; if (timer) clearTimeout(timer); }
+        if (line.startsWith('RENDERQ_MOVIE')) movie = true;
         if (!ready && !licenseError && LICENSE_ERROR.test(line)) licenseError = line.trim();
         if (!ready && !line.startsWith('RENDERQ') && UNLOADABLE.test(line)) {
           unloadable.push(line.replace(/^\[[\d:.]+\]\s*ERROR:\s*/, '').trim());
@@ -181,7 +191,7 @@ class NukeRenderJob {
         for (const stream of ['stdout', 'stderr']) if (buffer[stream]) handle(buffer[stream]);
         this.proc = null;
         this.deps.setCurrentProcess?.(null);
-        resolve({ code, err, tail, ready, licenseError, unloadable: [...new Set(unloadable)], timedOut });
+        resolve({ code, err, tail, ready, movie, licenseError, unloadable: [...new Set(unloadable)], timedOut });
       };
       proc.on('close', (code) => done(code));
       proc.on('error', (err) => done(-1, err));
@@ -251,7 +261,7 @@ class NukeRenderJob {
       const chunkSize = parseInt(this.settings.chunkSize, 10) || 0;
       const queue = [];
       for (let i = 0; i < missing.length; i += chunkSize || missing.length || 1) {
-        queue.push({ frames: missing.slice(i, i + (chunkSize || missing.length)), retries: 0 });
+        queue.push({ frames: missing.slice(i, i + (chunkSize || missing.length)), starts: 0 });
       }
       let doneCount = total - missing.length;
       const skipped = doneCount;
@@ -261,8 +271,21 @@ class NukeRenderJob {
         nukeGuiMode: !!this.gui, nukeGuiReason: this.guiReason || null });
 
       // 3. render
-      this.finished = new Set();
-      while (queue.length) {
+      this.finished = new Set();   // rendered, skipped as existing, or skipped as failed
+      const attempts = new Map();   // frame -> times Nuke exited while rendering it
+      let finalTry = false;
+      for (;;) {
+        if (!queue.length) {
+          // skipped frames get one more try before the job ends: the next job may be using this one's frames
+          if (finalTry || !this.failed.length) break;
+          finalTry = true;
+          const frames = this.failed.map((f) => f.frame).sort((a, b) => a - b);
+          this.failed = [];
+          this._log(`trying the ${frames.length} skipped frame(s) once more`);
+          for (const f of frames) { this.finished.delete(f); attempts.set(f, FRAME_ATTEMPTS - 1); }
+          doneCount -= frames.length;
+          queue.push({ frames, starts: 0, finalTry: true });
+        }
         if (this.state !== 'running') return this._finishInterrupted();
         const task = queue.shift();
         const result = await this._renderTask(task, total, () => doneCount, (n) => { doneCount = n; });
@@ -270,19 +293,45 @@ class NukeRenderJob {
         if (result.code === 0) continue;
 
         const left = task.frames.filter((f) => !this.finished.has(f));
-        const failed = result.tail.some((l) => l.startsWith('RENDERQ_ERROR'));   // a frame failed: retrying won't help
-        if (result.ready && !failed && task.retries < MAX_RETRIES && left.length) {
-          this._log(`Nuke exited (${result.err ? result.err.message : `exit code ${result.code}`}) - retrying ` +
-            `${left.length} frame(s) from ${left[0]} (attempt ${task.retries + 2})`);
-          queue.unshift({ frames: left, retries: task.retries + 1 });
+        const why = result.err ? result.err.message : `exit code ${result.code}`;
+        // the helper reported the error (comp, Write node or movie): starting Nuke again won't help
+        const reported = result.tail.some((l) => l.startsWith('RENDERQ_ERROR'));
+        if (reported || result.movie || result.timedOut) throw new Error(this._failure(result, 'Nuke render failed'));
+        if (!left.length) {
+          this._log(`Nuke exited (${why}) after rendering its frames - continuing`);
           continue;
         }
-        throw new Error(this._failure(result, 'Nuke render failed'));
+        if (!result.ready) {
+          // exited before rendering anything (the probe did open the comp, e.g. a licence that dropped out)
+          if (task.starts + 1 < START_ATTEMPTS) {
+            this._log(`Nuke exited before rendering (${why}) - starting ${left.length} frame(s) from ${left[0]} again`);
+            queue.unshift({ frames: left, starts: task.starts + 1, finalTry });
+            continue;
+          }
+          if (!finalTry) throw new Error(this._failure(result, 'Nuke render failed'));
+          // the job did render, only its skipped frames are left: they stay skipped
+          for (const f of left) this._skipFailed(f, this._failure(result, 'Nuke exited'), total, () => doneCount, (n) => { doneCount = n; });
+          continue;
+        }
+
+        // Nuke crashed on left[0] (frames render in order): continue from it, or past it
+        const frame = left[0];
+        const tries = (attempts.get(frame) || 0) + 1;
+        attempts.set(frame, tries);
+        if (tries < FRAME_ATTEMPTS) {
+          this._log(`Nuke exited on frame ${frame} (${why}) - continuing from frame ${frame} (attempt ${tries + 1})`);
+          queue.unshift({ frames: left, starts: 0, finalTry });
+          continue;
+        }
+        if (!this.skipFailedFrames) throw new Error(this._failure(result, 'Nuke render failed'));
+        this._log(`frame ${frame} failed ${finalTry ? 'again' : `${tries} times`} (${why}) - skipping it`);
+        this._skipFailed(frame, this._failure(result, 'Nuke exited'), total, () => doneCount, (n) => { doneCount = n; });
+        if (left.length > 1) queue.unshift({ frames: left.slice(1), starts: 0, finalTry });
       }
 
       this.state = 'done';
-      this._send('render-complete', {});
-      return { success: true };
+      this._send('render-complete', this._failedReport());
+      return { success: true, failedFrames: this._failedReport().failedFrames };
     } catch (error) {
       if (this.state !== 'running') return this._finishInterrupted();
       this.state = 'error';
@@ -315,6 +364,28 @@ class NukeRenderJob {
   _finishInterrupted() {
     if (this.state === 'paused') this._send('render-paused', {});
     return { success: false, [this.state]: true };
+  }
+
+  /** Give up on a frame that kept failing: count it as done for progress, report it as failed. */
+  _skipFailed(frame, error, total, getDone, setDone) {
+    if (this.finished.has(frame)) return;
+    this.finished.add(frame);
+    this.failed.push({ frame, error });
+    setDone(getDone() + 1);
+    this._send('render-progress', {
+      phase: 'render', frame, currentFrameIndex: getDone(), totalFrames: total, doneCount: getDone(),
+      renderedCount: this.rendered, elapsedMs: Date.now() - this.startedAt, frameDone: true, ...this._failedReport(),
+    });
+  }
+
+  /** Frames skipped after failing, for render-progress / render-complete. */
+  _failedReport() {
+    if (!this.failed.length) return { failedFrames: [] };
+    const last = this.failed[this.failed.length - 1];
+    return {
+      failedFrames: [...new Set(this.failed.map((f) => f.frame))].sort((a, b) => a - b),
+      failedFramesError: `frame ${last.frame}: ${last.error}`,
+    };
   }
 
   _selectedWrites(all) {
@@ -384,7 +455,7 @@ class NukeRenderJob {
 
   async _renderTask(task, total, getDone, setDone) {
     const cfg = this._config({
-      mode: 'render', frames: task.frames,
+      mode: 'render', frames: task.frames, frameAttempts: task.finalTry ? 1 : FRAME_ATTEMPTS,
       preview: this.previewDir ? { dir: this.previewDir, width: this.settings.previewWidth || 1280 } : null,
     });
     const cfgPath = this._writeConfig('render.json', cfg);
@@ -426,6 +497,11 @@ class NukeRenderJob {
         progress();
       } else if ((m = line.match(/^RENDERQ_SKIP (-?\d+)/))) {
         complete([parseInt(m[1], 10)], null);
+      } else if (line.startsWith('RENDERQ_FRAME_FAILED:')) {
+        let info;
+        try { info = JSON.parse(line.slice('RENDERQ_FRAME_FAILED:'.length)); } catch (e) { return; }
+        this._log(`frame ${info.frame} failed ${task.finalTry ? 'again' : `${FRAME_ATTEMPTS} times`} (${info.error}) - skipping it`);
+        this._skipFailed(info.frame, info.error, total, getDone, setDone);
       } else if (line.startsWith('RENDERQ_DONE:')) {
         let info;
         try { info = JSON.parse(line.slice('RENDERQ_DONE:'.length)); } catch (e) { return; }

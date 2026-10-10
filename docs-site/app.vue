@@ -385,7 +385,7 @@ import { ref, computed, onMounted } from 'vue';
 const baseURL = useRuntimeConfig().app.baseURL;
 const asset = (path: string) => `${baseURL}${path.replace(/^\/+/, '')}`;
 
-const version = ref('2.5.1');
+const version = ref('2.5.2');
 
 const apps = [
   {
@@ -429,6 +429,7 @@ const apps = [
 const moreFeatures = [
   { icon: 'upload_file', title: 'Drag & drop', text: 'Drop scene files from any supported application onto the queue.' },
   { icon: 'pause_circle', title: 'Pause, resume, stop', text: 'Pause mid-queue and pick up where you left off.' },
+  { icon: 'replay', title: 'Survives errors overnight', text: 'Failed frames are retried, then skipped. A failed job doesn't stop the rest of the queue.' },
   { icon: 'schedule', title: 'Queue ETA', text: 'Time remaining and expected finish time for the whole queue.' },
   { icon: 'warning', title: 'Overwrite protection', text: 'Warns before overwriting existing frames, or renders only the missing ones.' },
   { icon: 'notifications', title: 'Notifications', text: 'Desktop alerts when renders finish or fail.' },

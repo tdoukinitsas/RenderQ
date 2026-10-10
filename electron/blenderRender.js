@@ -6,8 +6,13 @@
  *   2. renders the missing frames with `-s S -e E -a`, one process per contiguous run (optionally split into
  *      chunks of N frames, and optionally one process per view layer, interleaved chunk by chunk so complete
  *      frames arrive progressively),
- *   3. reports progress parsed from Blender's log, retries a process that crashed after it had started
- *      rendering, and can be paused/stopped at any time - restarting skips everything already on disk.
+ *   3. reports progress parsed from Blender's log, and can be paused/stopped at any time - restarting skips
+ *      everything already on disk.
+ * When Blender exits while rendering, the job continues from the frame that was rendering. A frame that fails
+ * FRAME_ATTEMPTS times is skipped (with skipFailedFrames; otherwise the job fails), so one bad frame does not
+ * cost the rest of an overnight render. Skipped frames get one more try at the end of the job (a later job in
+ * the queue may depend on them); those that fail again are reported as failed. A movie can't continue part
+ * way: the job fails.
  *
  * Nothing in here depends on Electron; main.js injects process spawning, IPC sending and previews.
  */
@@ -15,7 +20,8 @@ const fs = require('fs');
 const path = require('path');
 
 const HELPER_SOURCE = path.join(__dirname, 'renderq_blender.py');
-const MAX_RETRIES = 2;                 // per process, only after it reached the "ready" line
+const FRAME_ATTEMPTS = 2;              // a frame Blender exits on this many times is skipped
+const START_ATTEMPTS = 2;              // processes that exit before the "ready" line (the probe opened the file)
 const DEFAULT_SPLIT_CHUNK = 100;       // frames per process when view layers are rendered separately
 
 // Frames completed during this app session, per job - lets a resumed job continue even with overwrite on.
@@ -63,7 +69,7 @@ function planTasks({ frames, layers, done, chunkSize }) {
     for (const layer of layers) {
       const finished = done.get(layer || '') || new Set();
       const missing = chunk.filter((f) => !finished.has(f));
-      for (const run of contiguousRuns(missing)) tasks.push({ layer, ...run, retries: 0 });
+      for (const run of contiguousRuns(missing)) tasks.push({ layer, ...run, starts: 0 });
     }
   }
   return tasks;
@@ -80,6 +86,7 @@ class BlenderRenderJob {
    * @param {string} o.jobId
    * @param {object} o.settings      per-job Blender settings (see renderq_blender.py for the meaning)
    * @param {boolean} o.resume       continue a paused job (keeps this session's finished frames)
+   * @param {boolean} o.skipFailedFrames  skip a frame that keeps failing instead of failing the job
    * @param {object} o.deps          { spawn(cmd,args,opts,meta), send(channel,data), kill(proc),
    *                                  makeTempDir(prefix), removeDir(dir), previewExr?(path,{allowBlender}),
    *                                  setCurrentProcess?(proc|null), log?(...args) }
@@ -91,8 +98,10 @@ class BlenderRenderJob {
     this.settings = o.settings || {};
     this.frames = parseFrameRanges(o.frameRanges);
     this.deps = o.deps;
+    this.skipFailedFrames = !!o.skipFailedFrames;
     this.state = 'idle';   // running | paused | stopped | done | error
     this.proc = null;
+    this.failed = [];      // { frame, layer } skipped after failing FRAME_ATTEMPTS times
     if (!o.resume) sessionDone.delete(this.jobId);
     if (!sessionDone.has(this.jobId)) sessionDone.set(this.jobId, new Map());
     this.finished = sessionDone.get(this.jobId);   // layer key -> Set(frame)
@@ -241,36 +250,76 @@ class BlenderRenderJob {
       this._send('render-progress', { phase: 'render', currentFrameIndex: doneCount, totalFrames: total, doneCount, skippedCount: skipped });
 
       // 3. render
-      while (queue.length) {
+      const attempts = new Map();   // `${layer}|${frame}` -> times Blender exited while rendering it
+      let finalTry = false;
+      for (;;) {
+        if (!queue.length) {
+          // skipped frames get one more try before the job ends: the next job may be using this one's frames
+          if (finalTry || !this.failed.length) break;
+          finalTry = true;
+          doneCount -= this._queueFinalTry(queue, attempts);
+        }
         if (this.state !== 'running') return this._finishInterrupted();
         const task = queue.shift();
         const result = await this._renderTask(task, total, () => doneCount, (n) => { doneCount = n; });
         if (this.state !== 'running') return this._finishInterrupted();
         if (result.code === 0) continue;
 
-        // crashed or failed: retry what is left of this run if it had got as far as rendering
+        const finished = this.finished.get(task.layer || '') || new Set();
         const left = [];
-        for (let f = task.start; f <= task.end; f++) {
-          if (!(this.finished.get(task.layer || '') || new Set()).has(f)) left.push(f);
-        }
+        for (let f = task.start; f <= task.end; f++) if (!finished.has(f)) left.push(f);
         const why = result.err ? result.err.message : `exit code ${result.code}`;
-        if (result.ready && task.retries < MAX_RETRIES && left.length) {
-          this._log(`Blender exited (${why}) - retrying frames ${left[0]}-${left[left.length - 1]}` +
-            `${task.layer ? ` of ${task.layer}` : ''} (attempt ${task.retries + 2})`);
-          const runs = contiguousRuns(left).map((r) => ({ layer: task.layer, ...r, retries: task.retries + 1 }));
-          queue.unshift(...runs);
+        const of = task.layer ? ` of ${task.layer}` : '';
+        if (!left.length) {
+          this._log(`Blender exited (${why}) after rendering frames ${task.start}-${task.end}${of} - continuing`);
           continue;
         }
-        const detail = result.tail.filter((l) => /error|traceback|exception/i.test(l)).slice(-4).join('\n') ||
-          result.tail.slice(-4).join('\n');
-        throw new Error(`Blender ${why}${task.layer ? ` (view layer ${task.layer})` : ''}` +
-          `${detail ? `:\n${detail}` : ''}`);
+        const failure = () => `Blender ${why}${task.layer ? ` (view layer ${task.layer})` : ''}` +
+          `${this._detail(result) ? `:\n${this._detail(result)}` : ''}`;
+        // a movie is written from its first frame: it can't continue part way
+        if (movie) throw new Error(failure());
+        const requeue = (frames, starts = 0) => {
+          queue.unshift(...contiguousRuns(frames).map((r) => ({ layer: task.layer, ...r, starts })));
+        };
+        if (!result.ready) {
+          // exited before rendering anything (the probe did open the file): worth another go
+          if (task.starts + 1 < START_ATTEMPTS) {
+            this._log(`Blender exited before rendering (${why}) - starting frames ${left[0]}-${left[left.length - 1]}${of} again`);
+            requeue(left, task.starts + 1);
+            continue;
+          }
+          if (!finalTry) throw new Error(failure());
+          // the job did render, only its skipped frames are left: they stay skipped
+          for (const frame of left) this.failed.push({ frame, layer: task.layer, error: this._detail(result) || why });
+          doneCount += left.length;
+          continue;
+        }
+
+        // exited while rendering left[0] (frames render in order): continue from it, or past it
+        const frame = left[0];
+        const key = `${task.layer || ''}|${frame}`;
+        const tries = (attempts.get(key) || 0) + 1;
+        attempts.set(key, tries);
+        if (tries < FRAME_ATTEMPTS) {
+          this._log(`Blender exited on frame ${frame}${of} (${why}) - continuing from frame ${frame} (attempt ${tries + 1})`);
+          requeue(left);
+          continue;
+        }
+        if (!this.skipFailedFrames) throw new Error(failure());
+        this.failed.push({ frame, layer: task.layer, error: this._detail(result) || why });
+        this._log(`frame ${frame}${of} failed ${finalTry ? 'again' : `${tries} times`} (${why}) - skipping it`);
+        doneCount += 1;
+        this._send('render-progress', {
+          phase: 'render', frame, layer: task.layer, currentFrameIndex: doneCount, totalFrames: total, doneCount,
+          renderedCount: this.rendered, elapsedMs: Date.now() - this.startedAt, frameDone: true, ...this._failedReport(),
+        });
+        if (left.length > 1) requeue(left.slice(1));
       }
 
       this.state = 'done';
       sessionDone.delete(this.jobId);
-      this._send('render-complete', {});
-      return { success: true };
+      this._send('render-complete', this._failedReport());
+      return { success: true, failedFrames: this._failedReport().failedFrames };
     } catch (error) {
       if (this.state !== 'running') return this._finishInterrupted();
       this.state = 'error';
@@ -286,6 +335,38 @@ class BlenderRenderJob {
     return { success: false, [this.state]: true };
   }
 
+  /** The lines of a process's output that explain why it failed. */
+  _detail(result) {
+    return result.tail.filter((l) => /error|traceback|exception/i.test(l)).slice(-4).join('\n') ||
+      result.tail.slice(-4).join('\n');
+  }
+
+  /** Queue the skipped frames for one more try; returns how many. */
+  _queueFinalTry(queue, attempts) {
+    const failed = this.failed;
+    this.failed = [];
+    this._log(`trying the ${failed.length} skipped frame(s) once more`);
+    const byLayer = new Map();
+    for (const { frame, layer } of failed) {
+      attempts.set(`${layer || ''}|${frame}`, FRAME_ATTEMPTS - 1);   // one more failure skips it for good
+      byLayer.set(layer, [...(byLayer.get(layer) || []), frame]);
+    }
+    for (const [layer, frames] of byLayer) {
+      queue.push(...contiguousRuns(frames.sort((a, b) => a - b)).map((r) => ({ layer, ...r, starts: 0 })));
+    }
+    return failed.length;
+  }
+
+  /** Frames skipped after failing, for render-progress / render-complete. */
+  _failedReport() {
+    if (!this.failed.length) return { failedFrames: [] };
+    const last = this.failed[this.failed.length - 1];
+    return {
+      failedFrames: [...new Set(this.failed.map((f) => f.frame))].sort((a, b) => a - b),
+      failedFramesError: `${last.layer ? `${last.layer}, ` : ''}frame ${last.frame}: ${last.error}`,
+    };
+  }
+
   async _probe() {
     const cfgPath = this._writeConfig('probe.json', this._config({ mode: 'probe', frames: this.frames }));
     let report = null;
@@ -296,8 +377,7 @@ class BlenderRenderJob {
     });
     if (this.state !== 'running') return { layers: {} };
     if (!report) {
-      const detail = result.tail.filter((l) => /error|traceback|exception/i.test(l)).slice(-4).join('\n') ||
-        result.tail.slice(-4).join('\n');
+      const detail = this._detail(result);
       throw new Error(`Could not prepare the Blender file (exit code ${result.code})${detail ? `:\n${detail}` : ''}`);
     }
     return report;

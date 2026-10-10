@@ -16,9 +16,12 @@ config.json:
     ignoreLoadErrors  keep going when loading the comp reports errors (like the GUI does)
     preview         {"dir": folder, "width": px} - also write a small JPEG of every finished frame
     preRenderPython code run after the comp is loaded (nuke, tcl available)
+    skipFailedFrames  a frame that fails frameAttempts times is reported (RENDERQ_FRAME_FAILED) and skipped
+                    instead of ending the render
+    frameAttempts   tries per frame with skipFailedFrames (default FRAME_ATTEMPTS)
 
 Protocol (stdout): RENDERQ_LOAD_ERROR <msg> | RENDERQ_PROBE:<json> | RENDERQ: ready | RENDERQ_FRAME <f> |
-RENDERQ_SKIP <f> | RENDERQ_DONE:<json> | RENDERQ_ERROR <msg>
+RENDERQ_SKIP <f> | RENDERQ_DONE:<json> | RENDERQ_FRAME_FAILED:<json> | RENDERQ_MOVIE <name> | RENDERQ_ERROR <msg>
 """
 import json
 import os
@@ -29,6 +32,7 @@ import time
 import nuke
 
 WRITE_CLASSES = ("Write", "DeepWrite", "WriteGeo", "GenerateLUT")
+FRAME_ATTEMPTS = 2
 MOVIE_TYPES = ("mov", "mov32", "mov64", "ffmpeg", "mxf", "mp4", "avi", "mkv", "webm")
 
 
@@ -219,6 +223,8 @@ def render(cfg):
     run_pre_render_python(cfg)
     preview = setup_preview(cfg)
     skip = cfg.get("skipExisting", True)
+    skip_failed = cfg.get("skipFailedFrames", False)
+    attempts = int(cfg.get("frameAttempts") or FRAME_ATTEMPTS) if skip_failed else 1
 
     for w in writes:   # Nuke 12 and older have no create_directories knob
         for f in write_frames(w, frames)[:1]:
@@ -253,11 +259,22 @@ def render(cfg):
             tcl("input RenderQ_PreviewScale 0 %s" % src)
             names.append("RenderQ_PreviewWrite")
         t = time.time()
-        try:
-            tcl("execute %s %d,%d" % (" ".join(names), f, f))
-        except Exception as e:
-            say("RENDERQ_ERROR frame %d: %s" % (f, e))
-            sys.exit(1)
+        error = None
+        for attempt in range(attempts):
+            try:
+                tcl("execute %s %d,%d" % (" ".join(names), f, f))
+                error = None
+                break
+            except Exception as e:
+                error = e
+                if attempt + 1 < attempts:
+                    say("RENDERQ: frame %d failed (%s) - trying it again" % (f, e))
+        if error is not None:
+            if not skip_failed:
+                say("RENDERQ_ERROR frame %d: %s" % (f, error))
+                sys.exit(1)
+            say("RENDERQ_FRAME_FAILED:" + json.dumps({"frame": f, "error": str(error)}))
+            continue
         outputs = dict((w["name"], out) for w, out in todo)
         say("RENDERQ_DONE:" + json.dumps({"frame": f, "outputs": outputs, "output": todo[0][1],
                                           "preview": frame_path(preview, f) if src else None,
@@ -267,6 +284,7 @@ def render(cfg):
         fs = write_frames(w, frames)
         if not fs:
             continue
+        say("RENDERQ_MOVIE", w["name"])
         say("RENDERQ_FRAME", fs[0])
         t = time.time()
         try:

@@ -81,6 +81,10 @@ export interface AppRenderParams {
     verbose?: number;
     cacheSize?: string;
   };
+  /** Continue a paused job (Blender, Nuke) */
+  resume?: boolean;
+  /** Blender, Nuke: skip a frame that fails twice instead of failing the job */
+  skipFailedFrames?: boolean;
 }
 
 export interface ExistingFramesResult {
@@ -120,6 +124,9 @@ export interface FrameRenderedData {
 
 export interface RenderCompleteData {
   jobId: string;
+  /** Blender, Nuke: frames skipped after failing twice */
+  failedFrames?: number[];
+  failedFramesError?: string;
 }
 
 export interface RenderErrorData {

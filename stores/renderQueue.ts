@@ -56,6 +56,8 @@ export interface RenderJob {
   error: string | null;
   renderStartTime: number | null;
   frameTimes: number[];
+  failedFrames?: number[];               // frames skipped after failing (Blender, Nuke): the job completes with a warning
+  failedFramesError?: string | null;     // why the last of them failed
   
   // Output type
   isVideoOutput: boolean;
@@ -355,6 +357,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
         renderStartTime: null,
         frameTimes: [],
         renderedFramePaths: [],
+        failedFrames: [],
+        failedFramesError: null,
       };
       const jobs = [...this.jobs];
       jobs.splice(index + 1, 0, copy);
@@ -404,6 +408,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
           renderStartTime: null,
           frameTimes: [],
           renderedFramePaths: [],
+          failedFrames: [],
+          failedFramesError: null,
         });
       }
     },
@@ -627,6 +633,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
           nukeGuiMode: job.nukeGuiMode,
           nukeGuiReason: job.nukeGuiReason,
           lastPreviewPath: job.status === 'complete' ? job.lastPreviewPath : null,
+          failedFrames: job.status === 'complete' ? (job.failedFrames ?? []) : [],
+          failedFramesError: job.status === 'complete' ? (job.failedFramesError ?? null) : null,
         }));
         
         try {
@@ -706,18 +714,39 @@ export const useRenderQueueStore = defineStore('renderQueue', {
       this.currentJobIndex = -1;
     },
 
-    completeCurrentJob() {
+    /** Finish the current job; frames it skipped after failing leave it complete with a warning */
+    completeCurrentJob({ failedFrames = [], failedFramesError = null }: { failedFrames?: number[]; failedFramesError?: string | null } = {}) {
       if (this.currentJob) {
         this.updateJob(this.currentJob.id, { 
           status: 'complete', 
           progress: 100,
           elapsedTime: this.currentJob.renderStartTime 
             ? Date.now() - this.currentJob.renderStartTime 
-            : 0
+            : 0,
+          failedFrames,
+          failedFramesError: failedFrames.length ? failedFramesError : null,
         });
       }
+      this.advanceToNextPending();
+      this.updateTotalProgress();
+    },
 
-      // Move to the next pending job (jobs can be moved or reset above the one that just finished)
+    /** Fail the current job; with continueQueue the queue moves on to the next pending job */
+    errorCurrentJob(error: string, { continueQueue = false }: { continueQueue?: boolean } = {}) {
+      if (this.currentJob) {
+        this.updateJob(this.currentJob.id, { status: 'error', error });
+      }
+      if (continueQueue) {
+        this.advanceToNextPending();
+        this.updateTotalProgress();
+      } else {
+        this.isRendering = false;
+        this.currentJobIndex = -1;
+      }
+    },
+
+    /** Move to the next pending job (jobs can be moved or reset above the one that just finished) */
+    advanceToNextPending() {
       const nextPendingIndex = this.jobs.findIndex(j => j.status === 'idle');
       if (nextPendingIndex !== -1) {
         this.currentJobIndex = nextPendingIndex;
@@ -725,16 +754,6 @@ export const useRenderQueueStore = defineStore('renderQueue', {
         this.isRendering = false;
         this.currentJobIndex = -1;
       }
-
-      this.updateTotalProgress();
-    },
-
-    errorCurrentJob(error: string) {
-      if (this.currentJob) {
-        this.updateJob(this.currentJob.id, { status: 'error', error });
-      }
-      this.isRendering = false;
-      this.currentJobIndex = -1;
     },
   },
 });
