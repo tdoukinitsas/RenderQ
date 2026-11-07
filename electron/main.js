@@ -8,6 +8,8 @@ const sharp = require('sharp');
 const { autoUpdater } = require('electron-updater');
 const { BlenderRenderJob } = require('./blenderRender');
 const { NukeRenderJob, detectNukeLicenses } = require('./nukeRender');
+const { McpHost } = require('./mcpServer');
+const mcpClients = require('./mcpClients');
 
 // Application type constants (mirroring types/applications.ts)
 const ApplicationType = {
@@ -163,6 +165,8 @@ function spawnTracked(command, args, options, meta) {
     signal: null,
     log: '',
     lastUpdate: Date.now(),
+    // render processes: the queue job they belong to (Blender/Nuke runners name them "<kind>:<jobId>")
+    jobId: meta?.jobId || (/:job_/.test(meta?.name || '') ? meta.name.slice(meta.name.indexOf(':') + 1) : null),
   };
   spawnedProcesses.set(id, entry);
 
@@ -310,8 +314,16 @@ function createWindow() {
     }
   }
 
+  // The MCP bridge in the page must register again after a (re)load
+  // (only a real page load: did-start-loading also fires for sub-resources after the page is up)
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) mcpHost?.setRendererReady(false);
+  });
+  mainWindow.webContents.on('render-process-gone', () => mcpHost?.setRendererReady(false));
+
   mainWindow.on('closed', () => {
     mainWindow = null;
+    mcpHost?.setRendererReady(false);
   });
   
   // Create native application menu
@@ -482,8 +494,86 @@ function setupAutoUpdater() {
 }
 
 app.whenReady().then(() => {
+  setupMcpServer();
   createWindow();
   setupAutoUpdater();
+});
+
+// ============================================================
+// MCP SERVER (agents: Claude, Codex, Cursor...) - see electron/mcpServer.js
+// ============================================================
+
+let mcpHost = null;
+
+/** How the stdio bridge starts RenderQ when an agent needs it and the app is closed */
+function mcpLaunchCommand() {
+  // a RenderQ started with its own user data folder is relaunched with it (its discovery file lives there)
+  const userDataDir = app.commandLine.getSwitchValue('user-data-dir');
+  const extra = userDataDir ? [`--user-data-dir=${userDataDir}`] : [];
+  if (process.env.APPIMAGE) return { command: process.env.APPIMAGE, args: extra };
+  if (app.isPackaged) return { command: process.execPath, args: extra };
+  return { command: process.execPath, args: [app.getAppPath(), ...extra] };
+}
+
+/** The command agent configs run: RenderQ's executable in Node mode on the bridge launcher script */
+function mcpBridgeCommand() {
+  return {
+    command: process.env.APPIMAGE || process.execPath,
+    args: [mcpHost.launcherPath()],
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  };
+}
+
+function setupMcpServer() {
+  mcpHost = new McpHost({
+    version: app.getVersion(),
+    discoveryDir: path.join(app.getPath('userData'), 'mcp'),
+    getWindow: () => mainWindow,
+    launch: mcpLaunchCommand(),
+    getJobProcesses: (jobId) => Array.from(spawnedProcesses.values())
+      .filter((p) => p.jobId === jobId)
+      .sort((a, b) => a.startedAt - b.startedAt),
+    onStatus: (status) => mainWindow?.webContents?.send('mcp-status', status),
+    log: (...args) => console.log('[MCP]', ...args),
+  });
+  mcpHost.applySettings(store.get('settings', {})).catch((err) => console.error('[MCP] Failed to start:', err));
+}
+
+// Synchronous: tells the bridge RenderQ is gone without holding up quitting (or quit-and-install)
+app.on('before-quit', () => mcpHost?.shutdown());
+
+ipcMain.on('mcp-renderer-ready', () => mcpHost?.setRendererReady(true));
+ipcMain.on('mcp-response', (event, response) => mcpHost?.handleRendererResponse(response));
+ipcMain.on('mcp-event', (event, data) => mcpHost?.handleRendererEvent(data));
+ipcMain.handle('mcp-get-status', async () => mcpHost?.getStatus() ?? null);
+ipcMain.handle('mcp-get-clients', async () => {
+  try {
+    return { success: true, clients: mcpClients.getClientsStatus(mcpBridgeCommand()) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+ipcMain.handle('mcp-install-client', async (event, clientId) => {
+  try {
+    mcpHost.writeLauncher();
+    return { success: true, ...mcpClients.installClient(clientId, mcpBridgeCommand()) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+ipcMain.handle('mcp-uninstall-client', async (event, clientId) => {
+  try {
+    return { success: true, ...mcpClients.uninstallClient(clientId) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+ipcMain.handle('mcp-client-snippet', async (event, clientId) => {
+  try {
+    return { success: true, ...mcpClients.getClientSnippet(clientId, mcpBridgeCommand()) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('get-app-log', async () => {
@@ -1933,7 +2023,7 @@ function startCinema4DRender({ appPath, sceneFile, frameRanges, jobId, appSettin
       windowsHide: true,
       cwd: path.dirname(sceneFile),
       stdio: ['pipe', 'pipe', 'pipe']
-    }, { name: 'cinema4d-render' });
+    }, { name: 'cinema4d-render', jobId });
     
     let currentFrame = frameStart;
     let lastOutputLine = '';
@@ -2033,7 +2123,7 @@ function startHoudiniRender({ appPath, sceneFile, frameRanges, jobId, appSetting
     currentRenderProcess = spawnTracked(appPath, args, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
-    }, { name: 'houdini-render' });
+    }, { name: 'houdini-render', jobId });
     
     let currentFrame = frameStart;
 
@@ -2163,7 +2253,7 @@ function startAfterEffectsRender({ appPath, sceneFile, frameRanges, jobId, appSe
       windowsHide: true,
       cwd: path.dirname(sceneFile),
       stdio: ['pipe', 'pipe', 'pipe']
-    }, { name: 'aftereffects-render' });
+    }, { name: 'aftereffects-render', jobId });
     
     let currentFrame = frameStart;
     let didRenderAnything = false;
@@ -2342,7 +2432,7 @@ function startMayaRender({ appPath, sceneFile, frameRanges, jobId, appSettings }
     currentRenderProcess = spawnTracked(appPath, args, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
-    }, { name: 'maya-render' });
+    }, { name: 'maya-render', jobId });
     
     let currentFrame = frameStart;
 
@@ -2755,21 +2845,26 @@ ipcMain.handle('save-queue', async (event, { queue, filePath }) => {
 });
 
 // Load queue from file
-ipcMain.handle('load-queue', async () => {
+// (with a filePath: no dialog - used by the MCP server's load_queue)
+ipcMain.handle('load-queue', async (event, params) => {
   try {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Load Render Queue',
-      filters: [{ name: 'JSON Files', extensions: ['json'] }],
-      properties: ['openFile']
-    });
-    
-    if (result.canceled) {
-      return { success: false, canceled: true };
+    let filePath = params?.filePath;
+    if (!filePath) {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: 'Load Render Queue',
+        filters: [{ name: 'JSON Files', extensions: ['json'] }],
+        properties: ['openFile']
+      });
+
+      if (result.canceled) {
+        return { success: false, canceled: true };
+      }
+      filePath = result.filePaths[0];
     }
-    
-    const content = fs.readFileSync(result.filePaths[0], 'utf-8');
+
+    const content = fs.readFileSync(filePath, 'utf-8');
     const queue = JSON.parse(content);
-    return { success: true, queue, filePath: result.filePaths[0] };
+    return { success: true, queue, filePath };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -2815,6 +2910,8 @@ ipcMain.handle('get-settings', async () => {
 // Save settings
 ipcMain.handle('save-settings', async (event, settings) => {
   store.set('settings', settings);
+  // MCP server: enabled / port / script permission live in the settings
+  await mcpHost?.applySettings(settings).catch((err) => console.error('[MCP] Failed to apply settings:', err));
   return { success: true };
 });
 

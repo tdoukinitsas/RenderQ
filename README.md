@@ -4,7 +4,7 @@ A desktop application for managing render queues across multiple 3D and composit
 
 ![RenderQ](public/renderq-screenshot.jpg)
 
-Built with AI Assistance from Github Copilot using Claude Opus 4.5, Claude Sonnet 4.5 and GPT 5.2
+Built with AI assistance using Claude Opus 5.5, Claude Opus 4.5, Claude Sonnet 4.5 and GPT 5.2
 
 ## Supported Applications
 
@@ -42,6 +42,7 @@ Built with AI Assistance from Github Copilot using Claude Opus 4.5, Claude Sonne
   - Save/load queue to JSON files
 - **Desktop Notifications**: Alerts when renders complete or encounter errors
 - **Application Auto-Detection**: Finds installed applications automatically
+- **AI Agents (MCP Server)**: Let Claude, Codex, Cursor and other agents build the queue, start renders and follow them to the end, with one-click setup in Settings > MCP Server (see [AI Agents](#ai-agents-mcp-server))
 
 ## Requirements
 
@@ -77,6 +78,9 @@ npm run electron:dev
 ```bash
 npm run electron:build
 ```
+
+### Updating on Windows
+The installer closes RenderQ before installing, including the background copies of RenderQ that connected AI agents run for the MCP server, and starts RenderQ again afterwards if it was open. Agents reconnect on their next request.
 
 ## Usage
 
@@ -135,6 +139,37 @@ When frames already exist in the output directory:
 - **Load Queue**: Import a previously saved queue
 - Auto-saves continuously to prevent data loss
 
+### AI Agents (MCP Server)
+RenderQ includes a [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI agent can run the queue for you. Ask it to "render shots 010 to 040 at 1920x1080 and tell me when they're done": it can add the files, set them up, start the render and follow it until it finishes, dealing with errors along the way. Everything it does appears in the RenderQ window as it happens.
+
+**Setting up**
+1. Open **Settings > MCP Server** and turn on **Enable MCP server**.
+2. Click **Install** next to your agent: Claude Desktop, Claude Code, OpenAI Codex (CLI, IDE extension and app), Cursor, VS Code (Copilot agent mode), Windsurf or Gemini CLI. RenderQ adds itself to the agent's MCP settings, keeping the rest of the file and saving a backup next to it (`*.renderq-backup`).
+3. Restart the agent, or start a new session.
+
+The agent runs a small bridge inside RenderQ's own executable, so nothing else needs installing. If RenderQ is closed when the agent needs it, the bridge starts it. For other MCP clients, **Copy JSON config** gives the command to run, and **Copy URL and token** gives the Streamable HTTP endpoint (`http://127.0.0.1:47770/mcp`). The access token changes every time RenderQ starts.
+
+ChatGPT's app can only reach MCP servers on the internet, not programs on your computer; use Codex instead.
+
+**What agents can do**
+
+| Area | Tools |
+|------|-------|
+| Read the queue | `get_queue_status` (state, progress, time remaining, estimated completion time), `list_jobs`, `get_job`, `list_render_apps`, `get_render_log` |
+| Edit the queue | `add_jobs`, `update_job` (frame range, resolution, output path, engine, view layers, Write nodes...), `remove_jobs`, `move_jobs`, `duplicate_job`, `reset_jobs`, `clear_queue` |
+| Queue files | `save_queue`, `load_queue` (replace or append) |
+| Render | `start_queue` (every pending job), `render_jobs` (only the given jobs), `pause_queue`, `resume_queue`, `stop_queue` |
+| Follow progress | `wait_for_events`: waits for the next event (job added, ready, started, progress, completed or failed; queue started, paused, completed or stopped...) and returns it with a short status |
+
+Events are also pushed to agents that support MCP notifications (logging messages, and updates to the `renderq://queue/status` and `renderq://queue/jobs` resources).
+
+Renders an agent starts never stop to ask about frames that already exist. By default, Blender and Nuke follow each job's **Skip frames that are already rendered** setting and other applications render only the missing frames; the agent can choose `skip` or `overwrite` instead.
+
+**Security**
+- The server only listens on `127.0.0.1` and needs an access token. RenderQ keeps the token in a file only your user can read (`<user data>/mcp/server.json`), and it rejects requests from web pages.
+- Pre-render Python scripts and per-job executable paths run code on your computer, so agents can't set them unless you turn on **Allow agents to set pre-render scripts and executable paths**.
+- Turning the server off stops it at once. Agents that try to use RenderQ are told it is turned off, and they don't start it.
+
 ### Keyboard Shortcuts
 Press `?` (or F1) in the app for the full list. The main ones:
 
@@ -182,6 +217,7 @@ You can also specify custom paths in Settings.
 - **Auto-save queue**: Continuously save queue state
 - **Desktop notifications**: Show alerts for render events
 - **Show preview**: Display latest rendered frame
+- **MCP Server**: Turn the agent server on or off, change its port (default 47770), allow agents to set pre-render scripts and executable paths, and install it in agent apps
 
 ## Development
 
@@ -191,7 +227,8 @@ blender-render-queue/
 ├── assets/
 │   └── scss/           # SCSS styles (IBM Carbon design)
 ├── components/         # Vue components
-├── electron/           # Electron main process
+├── composables/        # Shared page logic (useMcpBridge: the page's side of the MCP server)
+├── electron/           # Electron main process (mcpServer.js, mcpBridge.js, mcpClients.js, mcpTools.js: MCP server)
 ├── pages/              # Nuxt pages
 ├── public/             # Static assets
 └── stores/             # Pinia stores

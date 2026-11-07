@@ -569,8 +569,146 @@
             </div>
           </div>
         </div>
+
+        <!-- MCP Server Tab -->
+        <div v-if="activeTab === 'mcp'" class="tab-content">
+          <div class="settings-section">
+            <h3>MCP Server</h3>
+            <p class="form-hint mcp-intro">
+              Lets AI agents such as Claude, Codex or Cursor run this render queue through the Model Context Protocol:
+              add scene files, change jobs, load and save queue files, start and stop renders, and follow progress,
+              estimated completion time and errors. Everything an agent does shows up here as it happens.
+            </p>
+
+            <label class="setting-toggle">
+              <input
+                type="checkbox"
+                :checked="settings.mcpEnabled"
+                @change="settings.setMcpEnabled(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="setting-toggle__label">
+                <span class="setting-toggle__title">Enable MCP server</span>
+                <span class="setting-toggle__desc">Runs a server on this computer only (127.0.0.1), protected by an access token. Connected agents can start RenderQ when they need it.</span>
+              </span>
+            </label>
+
+            <div class="mcp-status" :class="`mcp-status--${mcpStatusKind}`" role="status">
+              <span class="mcp-status__dot" aria-hidden="true"></span>
+              <span>{{ mcpStatusText }}</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="mcp-port">Port</label>
+              <div class="input-with-button mcp-port">
+                <input
+                  id="mcp-port"
+                  type="number"
+                  class="form-input form-input--mono"
+                  v-model.number="mcpPortInput"
+                  min="1024"
+                  max="65535"
+                  @keydown.enter="applyMcpPort"
+                />
+                <button
+                  class="btn btn--secondary"
+                  :disabled="mcpPortInput === settings.mcpPort"
+                  @click="applyMcpPort"
+                >
+                  Apply
+                </button>
+              </div>
+              <span v-if="mcpPortError" class="form-hint mcp-error">{{ mcpPortError }}</span>
+              <span v-else class="form-hint">Default {{ DEFAULT_MCP_PORT }}. Connected agents find the new port by themselves.</span>
+            </div>
+
+            <label class="setting-toggle">
+              <input
+                type="checkbox"
+                :checked="settings.mcpAllowScripts"
+                @change="settings.setMcpAllowScripts(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="setting-toggle__label">
+                <span class="setting-toggle__title">Allow agents to set pre-render scripts and executable paths</span>
+                <span class="setting-toggle__desc">Pre-render Python (Blender, Nuke) and per-job executable paths run code on this computer. While this is off, agents can change every other job setting but not these.</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="settings-section">
+            <h3>Connect an Agent</h3>
+            <p class="form-hint mcp-intro">
+              Adds RenderQ to the agent's MCP settings. Your other settings are kept, and a backup of the file is saved next to it.
+              The agent runs a small bridge inside RenderQ, so nothing else needs installing.
+            </p>
+
+            <div class="mcp-clients">
+              <div v-for="client in mcpClients" :key="client.id" class="mcp-client">
+                <div class="mcp-client__info">
+                  <span class="mcp-client__name">
+                    {{ client.name }}
+                    <span v-if="client.description" class="mcp-client__desc">{{ client.description }}</span>
+                  </span>
+                  <span class="mcp-client__path" :title="client.configPath">{{ client.configPath }}</span>
+                  <span v-if="mcpClientMessages[client.id]" class="mcp-client__message" :class="{ 'mcp-error': mcpClientMessages[client.id].error }">
+                    {{ mcpClientMessages[client.id].text }}
+                  </span>
+                  <span v-else-if="client.error" class="mcp-client__message mcp-error">{{ client.error }}</span>
+                </div>
+                <span class="badge" :class="clientBadgeClass(client)">{{ clientBadgeText(client) }}</span>
+                <div class="mcp-client__actions">
+                  <button
+                    class="btn btn--sm"
+                    :class="client.state === 'installed' ? 'btn--secondary' : 'btn--primary'"
+                    :disabled="mcpBusy === client.id"
+                    @click="installMcpClient(client)"
+                  >
+                    {{ client.state === 'installed' ? 'Reinstall' : client.state === 'outdated' ? 'Update' : 'Install' }}
+                  </button>
+                  <button
+                    v-if="client.state !== 'not-installed'"
+                    class="btn btn--ghost btn--sm"
+                    :disabled="mcpBusy === client.id"
+                    @click="uninstallMcpClient(client)"
+                  >
+                    Remove
+                  </button>
+                  <button class="btn btn--ghost btn--sm" :title="`Copy the config to add to ${client.name} by hand`" @click="copyMcpSnippet(client)">
+                    {{ mcpCopied === client.id ? 'Copied' : 'Copy config' }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="mcpClientsError" class="installation-empty mcp-error">{{ mcpClientsError }}</div>
+            </div>
+
+            <p class="form-hint">
+              ChatGPT: the ChatGPT app only connects to MCP servers on the internet, not to programs on your computer.
+              Use OpenAI Codex (above) instead.
+            </p>
+          </div>
+
+          <div class="settings-section">
+            <h3>Other Agents</h3>
+            <div class="form-group">
+              <label class="form-label">Command (stdio)</label>
+              <span class="form-hint mcp-intro">Most MCP clients take a JSON entry like the ones above. Run this with the environment variable <code>ELECTRON_RUN_AS_NODE=1</code>:</span>
+              <pre class="mcp-code">{{ mcpCommandLine || '…' }}</pre>
+              <button class="btn btn--secondary btn--sm" @click="copyGenericConfig">
+                {{ mcpCopied === 'generic' ? 'Copied' : 'Copy JSON config' }}
+              </button>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Streamable HTTP</label>
+              <span class="form-hint mcp-intro">For clients that connect over HTTP. They can't start RenderQ, and the access token changes every time RenderQ starts.</span>
+              <pre class="mcp-code">{{ mcpStatus?.url || `http://127.0.0.1:${settings.mcpPort}/mcp` }}
+Authorization: Bearer {{ mcpStatus?.token ? '•'.repeat(12) : '(start the server first)' }}</pre>
+              <button class="btn btn--secondary btn--sm" :disabled="!mcpStatus?.token" @click="copyHttpConfig">
+                {{ mcpCopied === 'http' ? 'Copied' : 'Copy URL and token' }}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
-      
+
       <div class="modal__footer">
         <button class="btn btn--secondary" @click="$emit('close')">
           Close
@@ -581,11 +719,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRenderQueueStore } from '~/stores/renderQueue';
-import { useSettingsStore } from '~/stores/settings';
+import { useSettingsStore, DEFAULT_MCP_PORT } from '~/stores/settings';
 import { ApplicationType } from '~/types/applications';
 import { useModalDialog } from '~/composables/useModalDialog';
+import type { McpServerStatus, McpClientStatus } from '~/types/electron';
 
 const renderQueue = useRenderQueueStore();
 const settings = useSettingsStore();
@@ -606,9 +745,162 @@ const tabs = [
   { id: 'aftereffects', label: 'After Effects', color: '#9d4edd' },
   { id: 'nuke', label: 'Nuke', color: '#fbbf24' },
   { id: 'maya', label: 'Maya', color: '#00B4B4' },
+  { id: 'mcp', label: 'MCP Server', color: null },
 ];
 
 const activeTab = ref('general');
+
+// ============================================================ MCP Server tab
+
+const mcpStatus = ref<McpServerStatus | null>(null);
+const mcpClients = ref<McpClientStatus[]>([]);
+const mcpClientsError = ref('');
+const mcpClientMessages = reactive<Record<string, { text: string; error: boolean }>>({});
+const mcpBusy = ref<string | null>(null);
+const mcpCopied = ref<string | null>(null);
+const mcpPortInput = ref<number>(settings.mcpPort);
+const mcpPortError = ref('');
+const mcpGenericConfig = ref('');
+const mcpCommandLine = ref('');
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+const mcpStatusKind = computed(() => {
+  const s = mcpStatus.value;
+  if (!settings.mcpEnabled) return 'off';
+  if (!s || s.state === 'starting') return 'starting';
+  return s.state === 'running' ? 'on' : s.state === 'error' ? 'error' : 'off';
+});
+
+const mcpStatusText = computed(() => {
+  const s = mcpStatus.value;
+  if (!settings.mcpEnabled) return 'Off';
+  if (!s || s.state === 'starting') return 'Starting…';
+  if (s.state === 'error') return `Not running: ${s.error}`;
+  if (s.state !== 'running') return 'Stopped';
+  const names = [...new Set(s.sessions.map(x => x.name.replace(/ \(via renderq-mcp\)$/, '')))];
+  const agents = s.sessions.length === 0
+    ? 'no agents connected'
+    : `${s.sessions.length} agent${s.sessions.length === 1 ? '' : 's'} connected (${names.join(', ')})`;
+  return `Running at ${s.url}, ${agents}`;
+});
+
+function clientBadgeClass(client: McpClientStatus) {
+  if (client.state === 'installed') return 'badge--complete';
+  if (client.state === 'outdated') return 'badge--paused';
+  return client.detected ? 'badge--idle' : 'badge--loading-static';
+}
+
+function clientBadgeText(client: McpClientStatus) {
+  if (client.state === 'installed') return 'Installed';
+  if (client.state === 'outdated') return 'Needs update';
+  return client.detected ? 'Not installed' : 'Not found';
+}
+
+async function refreshMcpStatus() {
+  const api = (window as any).electronAPI;
+  if (!api?.mcpGetStatus) return;
+  mcpStatus.value = await api.mcpGetStatus();
+}
+
+async function refreshMcpClients() {
+  const api = (window as any).electronAPI;
+  if (!api?.mcpGetClients) return;
+  const result = await api.mcpGetClients();
+  if (result.success) {
+    mcpClients.value = result.clients;
+    mcpClientsError.value = '';
+  } else {
+    mcpClientsError.value = result.error || 'Could not read the agent settings';
+  }
+  // generic stdio config = the common "mcpServers" shape
+  const snippet = await api.mcpClientSnippet?.('claude-desktop');
+  if (snippet?.success) {
+    mcpGenericConfig.value = snippet.text;
+    try {
+      const entry = JSON.parse(snippet.text).mcpServers.renderq;
+      mcpCommandLine.value = [entry.command, ...entry.args].map((a: string) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+    } catch { /* leave empty */ }
+  }
+}
+
+async function installMcpClient(client: McpClientStatus) {
+  const api = (window as any).electronAPI;
+  mcpBusy.value = client.id;
+  try {
+    const result = await api.mcpInstallClient(client.id);
+    mcpClientMessages[client.id] = result.success
+      ? { text: `Added. ${result.restartHint || ''}`.trim(), error: false }
+      : { text: result.error || 'Could not install', error: true };
+    if (result.success && !settings.mcpEnabled) settings.setMcpEnabled(true);
+  } finally {
+    mcpBusy.value = null;
+    await refreshMcpClients();
+  }
+}
+
+async function uninstallMcpClient(client: McpClientStatus) {
+  const api = (window as any).electronAPI;
+  mcpBusy.value = client.id;
+  try {
+    const result = await api.mcpUninstallClient(client.id);
+    mcpClientMessages[client.id] = result.success
+      ? { text: 'Removed.', error: false }
+      : { text: result.error || 'Could not remove', error: true };
+  } finally {
+    mcpBusy.value = null;
+    await refreshMcpClients();
+  }
+}
+
+function copyText(text: string, key: string) {
+  (window as any).electronAPI?.copyText?.(text);
+  mcpCopied.value = key;
+  if (copiedTimer) clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => { mcpCopied.value = null; }, 2000);
+}
+
+async function copyMcpSnippet(client: McpClientStatus) {
+  const result = await (window as any).electronAPI.mcpClientSnippet(client.id);
+  if (result.success) copyText(result.text, client.id);
+  else mcpClientMessages[client.id] = { text: result.error || 'Could not build the config', error: true };
+}
+
+function copyGenericConfig() {
+  if (mcpGenericConfig.value) copyText(mcpGenericConfig.value, 'generic');
+}
+
+function copyHttpConfig() {
+  const s = mcpStatus.value;
+  if (!s?.token) return;
+  copyText(`URL: ${s.url}\nAuthorization: Bearer ${s.token}`, 'http');
+}
+
+function applyMcpPort() {
+  const port = Number(mcpPortInput.value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    mcpPortError.value = 'Enter a port between 1024 and 65535.';
+    return;
+  }
+  mcpPortError.value = '';
+  if (port !== settings.mcpPort) settings.setMcpPort(port);
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'mcp') {
+    refreshMcpStatus();
+    refreshMcpClients();
+  }
+});
+
+onMounted(() => {
+  const api = (window as any).electronAPI;
+  api?.onMcpStatus?.((status: McpServerStatus) => { mcpStatus.value = status; });
+});
+
+onUnmounted(() => {
+  (window as any).electronAPI?.removeAllListeners?.('mcp-status');
+  if (copiedTimer) clearTimeout(copiedTimer);
+});
 
 // Installation lists
 const blenderInstallations = ref<any[]>([]);
@@ -1010,6 +1302,127 @@ function saveAppSettings(appType: string) {
     flex: 1;
     min-width: 0;
   }
+}
+
+// MCP Server tab
+.mcp-intro {
+  margin: 0 0 $spacing-04;
+}
+
+.mcp-error {
+  color: $status-error;
+}
+
+.mcp-status {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  padding: $spacing-03 $spacing-04;
+  margin-bottom: $spacing-04;
+  border-radius: $radius-md;
+  background-color: $bg-tertiary;
+  font-size: $font-size-sm;
+  color: $text-secondary;
+  word-break: break-word;
+
+  &__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background-color: $text-tertiary;
+  }
+
+  &--on &__dot { background-color: $status-complete; }
+  &--starting &__dot { background-color: $status-rendering; }
+  &--error {
+    color: $status-error;
+    .mcp-status__dot { background-color: $status-error; }
+  }
+}
+
+.mcp-port input {
+  max-width: 160px;
+  flex: 0 1 160px;
+}
+
+.mcp-clients {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  margin-bottom: $spacing-04;
+}
+
+.mcp-client {
+  display: flex;
+  align-items: center;
+  gap: $spacing-04;
+  padding: $spacing-03 $spacing-04;
+  background-color: $bg-tertiary;
+  border: 1px solid $border-subtle;
+  border-radius: $radius-md;
+
+  &__info {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-01;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__name {
+    font-size: $font-size-sm;
+    font-weight: $font-weight-medium;
+    color: $text-primary;
+  }
+
+  &__desc {
+    font-weight: normal;
+    color: $text-tertiary;
+    margin-left: $spacing-02;
+  }
+
+  &__path {
+    font-size: $font-size-xs;
+    color: $text-tertiary;
+    font-family: $font-family-mono;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__message {
+    font-size: $font-size-xs;
+    color: $status-complete;
+  }
+
+  &__actions {
+    display: flex;
+    gap: $spacing-02;
+    flex-shrink: 0;
+  }
+
+  .badge {
+    flex-shrink: 0;
+  }
+}
+
+.badge--loading-static {
+  background-color: rgba($text-tertiary, 0.2);
+  color: $text-tertiary;
+}
+
+.mcp-code {
+  margin: 0 0 $spacing-03;
+  padding: $spacing-03;
+  background-color: $bg-tertiary;
+  border: 1px solid $border-subtle;
+  border-radius: $radius-md;
+  font-family: $font-family-mono;
+  font-size: $font-size-xs;
+  color: $text-secondary;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .setting-toggle {

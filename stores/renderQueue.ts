@@ -104,6 +104,8 @@ export interface RenderQueueState {
   currentJobIndex: number;
   isRendering: boolean;
   isPaused: boolean;
+  /** Rendering only these jobs (an agent's render_jobs); null renders every pending job */
+  runJobIds: string[] | null;
   
   // Legacy - kept for backwards compatibility
   blenderPath: string;
@@ -135,6 +137,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
     currentJobIndex: -1,
     isRendering: false,
     isPaused: false,
+    runJobIds: null,
     
     // Legacy
     blenderPath: '',
@@ -208,6 +211,9 @@ export const useRenderQueueStore = defineStore('renderQueue', {
     },
 
     pendingJobs: (state) => state.jobs.filter(j => j.status === 'idle'),
+
+    /** Pending jobs the current run will render (all of them, or the ones picked with runJobIds) */
+    runnablePendingJobs: (state) => state.jobs.filter(j => j.status === 'idle' && (!state.runJobIds || state.runJobIds.includes(j.id))),
     
     completedJobs: (state) => state.jobs.filter(j => j.status === 'complete'),
     
@@ -684,8 +690,8 @@ export const useRenderQueueStore = defineStore('renderQueue', {
       this.isRendering = true;
       this.isPaused = false;
       
-      // Find first pending job (skip missing-app jobs)
-      const pendingIndex = this.jobs.findIndex(j => j.status === 'idle');
+      // Find first pending job of this run (skip missing-app jobs)
+      const pendingIndex = this.jobs.findIndex(j => j.status === 'idle' && (!this.runJobIds || this.runJobIds.includes(j.id)));
       if (pendingIndex !== -1) {
         this.currentJobIndex = pendingIndex;
       }
@@ -708,6 +714,7 @@ export const useRenderQueueStore = defineStore('renderQueue', {
     stopRendering() {
       this.isRendering = false;
       this.isPaused = false;
+      this.runJobIds = null;
       if (this.currentJob) {
         this.updateJob(this.currentJob.id, { status: 'idle', progress: 0, currentFrame: 0, currentSample: 0, totalSamples: 0 });
       }
@@ -742,12 +749,13 @@ export const useRenderQueueStore = defineStore('renderQueue', {
       } else {
         this.isRendering = false;
         this.currentJobIndex = -1;
+        this.runJobIds = null;
       }
     },
 
     /** Move to the next pending job (jobs can be moved or reset above the one that just finished) */
     advanceToNextPending() {
-      const nextPendingIndex = this.jobs.findIndex(j => j.status === 'idle');
+      const nextPendingIndex = this.jobs.findIndex(j => j.status === 'idle' && (!this.runJobIds || this.runJobIds.includes(j.id)));
       if (nextPendingIndex !== -1) {
         this.currentJobIndex = nextPendingIndex;
       } else {

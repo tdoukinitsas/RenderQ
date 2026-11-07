@@ -251,7 +251,8 @@ export interface ElectronAPI {
   // QUEUE PERSISTENCE
   // ============================================================
   saveQueue(params: { queue: any[]; filePath?: string }): Promise<SaveQueueResult>;
-  loadQueue(): Promise<LoadQueueResult>;
+  /** Without a filePath, asks the user with a file dialog */
+  loadQueue(params?: { filePath?: string }): Promise<LoadQueueResult>;
   autoSaveQueue(queue: any[]): Promise<{ success: boolean; error?: string }>;
   loadAutoSavedQueue(): Promise<{ success: boolean; queue: any[]; error?: string }>;
   
@@ -306,7 +307,47 @@ export interface ElectronAPI {
   onAppLog?: (callback: (data: { line: string }) => void) => void;
   
   // Remove listeners
+  // MCP server (agents)
+  mcpGetStatus(): Promise<McpServerStatus | null>;
+  mcpGetClients(): Promise<{ success: boolean; clients?: McpClientStatus[]; error?: string }>;
+  mcpInstallClient(clientId: string): Promise<{ success: boolean; files?: string[]; restartHint?: string; error?: string }>;
+  mcpUninstallClient(clientId: string): Promise<{ success: boolean; files?: string[]; error?: string }>;
+  mcpClientSnippet(clientId: string): Promise<{ success: boolean; language?: 'json' | 'toml'; file?: string; text?: string; error?: string }>;
+  onMcpStatus(callback: (status: McpServerStatus) => void): void;
+  onMcpRequest(callback: (request: { id: number; method: string; params: any }) => void): void;
+  mcpRespond(response: { id: number; ok: boolean; result?: any; error?: string }): void;
+  mcpEmitEvent(event: { type: string; [key: string]: any }): void;
+  mcpRendererReady(): void;
+  onMcpHello(callback: () => void): void;
+  copyText(text: string): void;
+
   removeAllListeners(channel: string): void;
+}
+
+export interface McpServerStatus {
+  enabled: boolean;
+  allowScripts: boolean;
+  state: 'stopped' | 'starting' | 'running' | 'error';
+  error: string | null;
+  port: number;
+  url: string;
+  /** Access token for direct HTTP connections (changes every launch) */
+  token: string | null;
+  /** Bridge launcher script that agent configs run */
+  launcherPath: string;
+  sessions: { name: string; version: string; lastSeen: number }[];
+}
+
+export interface McpClientStatus {
+  id: string;
+  name: string;
+  description: string;
+  /** The client's config folder exists */
+  detected: boolean;
+  state: 'installed' | 'outdated' | 'not-installed';
+  configPath: string;
+  error: string | null;
+  restartHint: string;
 }
 
 declare global {

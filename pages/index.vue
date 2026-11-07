@@ -765,6 +765,7 @@ import { useSystemMonitorStore } from '~/stores/systemMonitor';
 import { useSettingsStore } from '~/stores/settings';
 import { framesToRangeString } from '~/utils/helpers';
 import { ApplicationType, APPLICATION_FILE_EXTENSIONS, getAppTypeFromExtension, APPLICATION_INFO } from '~/types/applications';
+import { useMcpBridge, type ExistingFramesPolicy } from '~/composables/useMcpBridge';
 
 // Legacy type alias
 type BlendJob = RenderJob;
@@ -774,11 +775,30 @@ const systemMonitor = useSystemMonitorStore();
 const settings = useSettingsStore();
 
 // App version from package.json (fetched via Electron)
-const appVersion = ref('2.5.2');
+const appVersion = ref('2.6.0');
 
 const showSettings = ref(false);
 const overwriteWarning = ref<{ job: RenderJob; existingFrames: any[] } | null>(null);
 const isDragOver = ref(false);
+
+// Runs started by an agent (MCP) never wait on a dialog: existing output frames are handled by this policy.
+// null = a run the user started (the overwrite warning asks).
+let renderPolicy: { existingFrames: ExistingFramesPolicy } | null = null;
+// Per-run setting overrides for a job (e.g. skipExisting from the policy), kept for pause/resume
+const runSettingsOverrides = new Map<string, Record<string, any>>();
+
+// MCP server: lets agents read/edit the queue and drive renders (Settings > MCP Server)
+const mcpBridge = useMcpBridge({
+  addSceneFiles: (filePaths, options) => loadSceneFiles(filePaths, options),
+  startRender: (options) => beginRender({ ...options, fromAgent: true }),
+  pauseRender: () => pauseRendering(),
+  resumeRender: () => resumeRendering(),
+  stopRender: () => stopRendering(),
+  saveQueueTo: (filePath) => saveQueueToFile(filePath),
+  loadQueueFrom: (filePath, mode) => loadQueueFromFile(filePath, mode),
+  getAppPathForType: (appType) => getAppPathForType(appType),
+  getAppPathForJob: (job) => getAppPathForJob(job),
+});
 
 // Resizable panel state. Sizes are fractions of the space the panels share (as flex-grow
 // factors), so every panel keeps its proportion when the window is resized.
@@ -2297,9 +2317,12 @@ onMounted(async () => {
     
     // Set up render event listeners
     setupRenderListeners();
-    
+
     // Initial window title update
     updateWindowTitle();
+
+    // Agents can use the queue from now on
+    mcpBridge.ready();
   }
   
   // Set up menu event listeners
@@ -2519,6 +2542,7 @@ function setupRenderListeners() {
     const failedName = renderQueue.currentJob?.fileName;
     // a failed job doesn't stop the queue (unless turned off in Settings): the next one may still render
     const keepGoing = settings.continueOnRenderErrors && renderQueue.isRendering;
+    if (!keepGoing) mcpBridge.setStopReason('error');
     renderQueue.errorCurrentJob(data.error, { continueQueue: keepGoing });
     announce(`Render error${failedName ? ` in ${failedName}` : ''}: ${data.error}`, true);
 
@@ -2539,13 +2563,24 @@ function setupRenderListeners() {
 
 /** After a job finished or failed: start the next pending job, or report the queue as done */
 function continueQueue() {
-  if (renderQueue.pendingJobs.length > 0) {
+  if (renderQueue.runnablePendingJobs.length > 0) {
     if (renderQueue.isRendering) startNextJob();
     return;
   }
+  // the jobs of this run (all of them, or the ones an agent picked)
+  const runJobs = renderQueue.runJobIds ? renderQueue.jobs.filter(j => renderQueue.runJobIds!.includes(j.id)) : renderQueue.jobs;
+  const failedJobs = runJobs.filter(j => j.status === 'error').length;
+  const skippedFrames = runJobs.reduce((n, j) => n + (j.status === 'complete' ? j.failedFrames?.length ?? 0 : 0), 0);
+  mcpBridge.markQueueCompleted({
+    completedJobs: runJobs.filter(j => j.status === 'complete').length,
+    failedJobs,
+    skippedFrames,
+    failed: runJobs.filter(j => j.status === 'error').map(j => ({ jobId: j.id, fileName: j.fileName, error: j.error })),
+  });
   renderQueue.isRendering = false;
-  const failedJobs = renderQueue.jobs.filter(j => j.status === 'error').length;
-  const skippedFrames = renderQueue.jobs.reduce((n, j) => n + (j.status === 'complete' ? j.failedFrames?.length ?? 0 : 0), 0);
+  renderQueue.currentJobIndex = -1;
+  renderQueue.runJobIds = null;
+  runSettingsOverrides.clear();
   const problems = [
     failedJobs ? `${failedJobs} job${failedJobs === 1 ? '' : 's'} failed` : '',
     skippedFrames ? `${skippedFrames} frame${skippedFrames === 1 ? '' : 's'} skipped` : '',
@@ -2735,17 +2770,31 @@ async function addBlendFiles() {
   await loadSceneFiles(filePaths);
 }
 
-async function saveQueue(saveAs: boolean = false) {
-  if (typeof window === 'undefined' || !(window as any).electronAPI) return;
-  
-  const api = (window as any).electronAPI;
-
+function queueFileData() {
   // Ensure we send plain JSON across IPC (Pinia state is reactive).
-  const queueData = JSON.parse(JSON.stringify({
+  return JSON.parse(JSON.stringify({
     jobs: renderQueue.jobs,
     blenderPath: renderQueue.blenderPath,
   }));
-  
+}
+
+/** Save the queue to a file without a dialog (MCP save_queue); returns the path written */
+async function saveQueueToFile(filePath: string): Promise<string> {
+  const result = await (window as any).electronAPI.saveQueue({ queue: queueFileData(), filePath });
+  if (!result?.success || !result.filePath) throw new Error(result?.error || 'Could not save the queue file');
+  renderQueue.currentQueueFile = result.filePath;
+  renderQueue.hasUnsavedChanges = false;
+  updateWindowTitle();
+  return result.filePath;
+}
+
+async function saveQueue(saveAs: boolean = false) {
+  if (typeof window === 'undefined' || !(window as any).electronAPI) return;
+
+  const api = (window as any).electronAPI;
+
+  const queueData = queueFileData();
+
   const filePath = !saveAs && renderQueue.currentQueueFile ? renderQueue.currentQueueFile : null;
 
   let result;
@@ -2779,27 +2828,66 @@ async function loadQueue() {
   }
 
   if (result?.canceled) return;
-  
-  if (result.success && result.queue) {
-    renderQueue.jobs = result.queue.jobs || [];
-    renderQueue.currentJobIndex = -1;
-    renderQueue.selectJob(null);
-    expandedJobIds.value.clear();
-    if (result.queue.blenderPath) {
-      renderQueue.setBlenderPath(result.queue.blenderPath);
-    }
-    renderQueue.currentQueueFile = result.filePath;
-    renderQueue.hasUnsavedChanges = false;
 
-    // Migrate any old per-job After Effects override paths (AfterFX.exe -> aerender.exe)
-    migrateAfterEffectsJobOverrides();
-    
-    // Re-validate jobs
-    renderQueue.validateJobApplications();
-    updateWindowTitle();
+  if (result.success && result.queue) {
+    applyLoadedQueue(result.queue, result.filePath, 'replace');
   } else if (result?.error) {
     console.error('Load queue error:', result.error);
   }
+}
+
+/** Jobs from a queue file, made ready to render again (nothing is running for them now) */
+function normalizeLoadedJobs(jobs: any[]): RenderJob[] {
+  return (Array.isArray(jobs) ? jobs : []).filter(j => j && j.filePath).map((job: any) => ({
+    ...job,
+    applicationType: job.applicationType ?? ApplicationType.BLENDER,
+    status: job.status === 'rendering' || job.status === 'paused' || job.status === 'loading' ? 'idle' : (job.status || 'idle'),
+    frameTimes: job.frameTimes ?? [],
+    renderedFramePaths: job.renderedFramePaths ?? [],
+    exrLayers: job.exrLayers ?? [],
+    isVideoOutput: job.isVideoOutput ?? false,
+  }));
+}
+
+/** Put a loaded queue file in the queue (replacing it, or appending its jobs); returns the ids of its jobs */
+function applyLoadedQueue(queue: any, filePath: string, mode: 'replace' | 'append'): string[] {
+  const loaded = normalizeLoadedJobs(queue?.jobs);
+  if (mode === 'append') {
+    // a queue can be appended to itself: copies get fresh ids
+    const taken = new Set(renderQueue.jobs.map(j => j.id));
+    for (const job of loaded) {
+      if (!job.id || taken.has(job.id)) job.id = renderQueue.generateId();
+      taken.add(job.id);
+    }
+    renderQueue.reorderJobs([...renderQueue.jobs, ...loaded]);
+    renderQueue.hasUnsavedChanges = true;
+  } else {
+    renderQueue.jobs = loaded;
+    renderQueue.currentJobIndex = -1;
+    renderQueue.selectJob(null);
+    expandedJobIds.value.clear();
+    if (queue?.blenderPath) {
+      renderQueue.setBlenderPath(queue.blenderPath);
+    }
+    renderQueue.currentQueueFile = filePath;
+    renderQueue.hasUnsavedChanges = false;
+    renderQueue.autoSave();
+  }
+
+  // Migrate any old per-job After Effects override paths (AfterFX.exe -> aerender.exe)
+  migrateAfterEffectsJobOverrides();
+
+  // Re-validate jobs
+  renderQueue.validateJobApplications();
+  updateWindowTitle();
+  return loaded.map(j => j.id);
+}
+
+/** Load a queue file without a dialog (MCP load_queue) */
+async function loadQueueFromFile(filePath: string, mode: 'replace' | 'append'): Promise<string[]> {
+  const result = await (window as any).electronAPI.loadQueue({ filePath });
+  if (!result?.success || !result.queue) throw new Error(result?.error || 'Could not read the queue file');
+  return applyLoadedQueue(result.queue, result.filePath, mode);
 }
 
 function migrateAfterEffectsJobOverrides() {
@@ -2820,97 +2908,133 @@ async function loadBlendFiles(filePaths: string[]) {
   await loadSceneFiles(filePaths);
 }
 
-async function loadSceneFiles(filePaths: string[]) {
-  if (typeof window === 'undefined' || !(window as any).electronAPI) return;
-  
+/**
+ * Add scene files as jobs: a placeholder ("loading") for every file at once, then each scene is read in turn.
+ * options (agents, MCP add_jobs): frame range / setting overrides applied once a scene is read, and where to insert.
+ */
+function loadSceneFiles(
+  filePaths: string[],
+  options: { frameRanges?: string; appSettings?: Record<string, any>; position?: 'end' | 'top' | number } = {},
+): { jobIds: string[]; done: Promise<void> } {
+  if (typeof window === 'undefined' || !(window as any).electronAPI) return { jobIds: [], done: Promise.resolve() };
+
   const api = (window as any).electronAPI;
-  
+  const placeholders: { id: string; filePath: string; appType: ApplicationType; appPath: string }[] = [];
+
   for (const filePath of filePaths) {
-    try {
-      // Determine application type from file extension
-      const appType = getAppTypeFromExtension(filePath) || ApplicationType.BLENDER;
+    // Determine application type from file extension
+    const appType = getAppTypeFromExtension(filePath) || ApplicationType.BLENDER;
+
+    // Get the appropriate app path
+    const appPath = getAppPathForType(appType);
+
+    // Extract filename for display
+    const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Unknown';
+
+    // Add placeholder job immediately with 'loading' status
+    const placeholderJobId = renderQueue.generateId();
+    placeholders.push({ id: placeholderJobId, filePath, appType, appPath });
+    renderQueue.addJob({
+      id: placeholderJobId,
+      filePath,
+      fileName,
+      applicationType: appType,
+      status: 'loading',
+      // Placeholder values - will be updated when metadata is fetched
+      originalFrameStart: 1,
+      originalFrameEnd: 1,
+      frameRanges: '1-1',
+      outputPath: '',
+      outputDir: '',
+      renderEngine: getDefaultRenderEngine(appType),
+      format: 'PNG',
+      resolution: { x: 1920, y: 1080, percentage: 100 },
+      fps: 24,
+      isVideoOutput: false,
+    });
+  }
+
+  // Insert where asked (agents): the placeholders were appended above
+  if (options.position !== undefined && options.position !== 'end' && placeholders.length) {
+    const ids = new Set(placeholders.map(p => p.id));
+    const added = renderQueue.jobs.filter(j => ids.has(j.id));
+    const rest = renderQueue.jobs.filter(j => !ids.has(j.id));
+    const at = options.position === 'top' ? 0 : Math.min(options.position, rest.length);
+    rest.splice(at, 0, ...added);
+    renderQueue.reorderJobs(rest);
+  }
+
+  const done = (async () => {
+    for (const { id: placeholderJobId, filePath, appType, appPath } of placeholders) {
+      try {
+        // removed from the queue while waiting for its turn
+        if (!renderQueue.jobs.some(j => j.id === placeholderJobId)) continue;
+
+        let info: any;
       
-      // Get the appropriate app path
-      const appPath = getAppPathForType(appType);
-      
-      // Extract filename for display
-      const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Unknown';
-      
-      // Add placeholder job immediately with 'loading' status
-      const placeholderJobId = renderQueue.generateId();
-      renderQueue.addJob({
-        id: placeholderJobId,
-        filePath,
-        fileName,
-        applicationType: appType,
-        status: 'loading',
-        // Placeholder values - will be updated when metadata is fetched
-        originalFrameStart: 1,
-        originalFrameEnd: 1,
-        frameRanges: '1-1',
-        outputPath: '',
-        outputDir: '',
-        renderEngine: getDefaultRenderEngine(appType),
-        format: 'PNG',
-        resolution: { x: 1920, y: 1080, percentage: 100 },
-        fps: 24,
-        isVideoOutput: false,
-      });
-      
-      let info: any;
-      
-      // Use unified scene info if available, fallback to Blender-specific
-      if (api.getSceneInfo) {
-        info = await api.getSceneInfo({
-          appPath,
-          sceneFile: filePath,
-          appType,
-          // Nuke: the licence to open the comp with
-          appSettings: JSON.parse(JSON.stringify((settings.appSettings as any)?.[appType] || {})),
-        });
-        
-        if (!info.success) {
-          console.error('Error getting scene info:', info.error);
-          renderQueue.updateJob(placeholderJobId, {
-            status: 'error',
-            error: info.error || 'Failed to fetch scene metadata',
+        // Use unified scene info if available, fallback to Blender-specific
+        if (api.getSceneInfo) {
+          info = await api.getSceneInfo({
+            appPath,
+            sceneFile: filePath,
+            appType,
+            // Nuke: the licence to open the comp with
+            appSettings: JSON.parse(JSON.stringify((settings.appSettings as any)?.[appType] || {})),
           });
-          continue;
+        
+          if (!info.success) {
+            console.error('Error getting scene info:', info.error);
+            renderQueue.updateJob(placeholderJobId, {
+              status: 'error',
+              error: info.error || 'Failed to fetch scene metadata',
+            });
+            continue;
+          }
+        } else {
+          // Legacy: Blender only
+          info = await api.getBlendInfo({
+            blenderPath: renderQueue.blenderPath,
+            blendFile: filePath,
+          });
         }
-      } else {
-        // Legacy: Blender only
-        info = await api.getBlendInfo({
-          blenderPath: renderQueue.blenderPath,
-          blendFile: filePath,
+      
+        // Update the placeholder job with actual scene data
+        renderQueue.updateJob(placeholderJobId, {
+          originalFrameStart: info.frameStart,
+          originalFrameEnd: info.frameEnd,
+          frameRanges: `${info.frameStart}-${info.frameEnd}`,
+          outputPath: info.outputPath,
+          outputDir: info.outputDir,
+          renderEngine: info.renderEngine || getDefaultRenderEngine(appType),
+          format: info.format,
+          resolution: info.resolution || { x: 1920, y: 1080, percentage: 100 },
+          fps: info.fps,
+          isVideoOutput: info.isVideoOutput || false,
+          viewLayers: info.viewLayers,
+          pythonDriverCount: info.pythonDriverCount,
+          writeNodes: info.writeNodes,
+          loadErrors: info.loadErrors,
+          nukeVersion: info.nukeVersion,
+          nukeLicense: info.nukeLicense,
+          nukeGuiMode: info.nukeGuiMode,
+          nukeGuiReason: info.nukeGuiReason,
+          // overrides an agent asked for (MCP add_jobs)
+          ...(options.frameRanges ? { frameRanges: options.frameRanges, useCustomFrameRange: true } : {}),
+          ...(options.appSettings ? { appSettings: { ...options.appSettings } } : {}),
+          // last: the job_ready event (MCP) is sent as soon as the status changes
+          status: 'idle',
+        });
+      } catch (error) {
+        console.error('Error loading scene file:', error);
+        renderQueue.updateJob(placeholderJobId, {
+          status: 'error',
+          error: (error as any)?.message || 'Failed to read the scene',
         });
       }
-      
-      // Update the placeholder job with actual scene data
-      renderQueue.updateJob(placeholderJobId, {
-        status: 'idle',
-        originalFrameStart: info.frameStart,
-        originalFrameEnd: info.frameEnd,
-        frameRanges: `${info.frameStart}-${info.frameEnd}`,
-        outputPath: info.outputPath,
-        outputDir: info.outputDir,
-        renderEngine: info.renderEngine || getDefaultRenderEngine(appType),
-        format: info.format,
-        resolution: info.resolution || { x: 1920, y: 1080, percentage: 100 },
-        fps: info.fps,
-        isVideoOutput: info.isVideoOutput || false,
-        viewLayers: info.viewLayers,
-        pythonDriverCount: info.pythonDriverCount,
-        writeNodes: info.writeNodes,
-        loadErrors: info.loadErrors,
-        nukeVersion: info.nukeVersion,
-        nukeLicense: info.nukeLicense,
-        nukeGuiMode: info.nukeGuiMode,
-        nukeGuiReason: info.nukeGuiReason,
-      });
-    } catch (error) {
-      console.error('Error loading scene file:', error);
     }
-  }
+  })();
+
+  return { jobIds: placeholders.map(p => p.id), done };
 }
 
 function getAppPathForType(appType: ApplicationType): string {
@@ -2953,12 +3077,29 @@ function getDefaultRenderEngine(appType: ApplicationType): string {
   }
 }
 
+/** The Render button / shortcut: every pending job, asking about existing frames */
 async function startRendering() {
+  await beginRender({});
+}
+
+/**
+ * Start a run: every pending job, or only jobIds (agents' render_jobs). Agents' runs (with an existingFrames
+ * policy, 'default' when not given) never show the overwrite warning.
+ */
+async function beginRender({ jobIds = null, existingFrames, fromAgent = false }: {
+  jobIds?: string[] | null;
+  existingFrames?: ExistingFramesPolicy;
+  fromAgent?: boolean;
+} = {}) {
+  renderPolicy = fromAgent ? { existingFrames: existingFrames ?? 'default' } : null;
+  runSettingsOverrides.clear();
+  renderQueue.runJobIds = jobIds && jobIds.length ? [...jobIds] : null;
+
   // Validate all jobs have their required applications
   validateJobApplications();
-  
+
   // Check first pending job for existing frames
-  const firstPending = renderQueue.pendingJobs[0];
+  const firstPending = renderQueue.runnablePendingJobs[0];
   if (firstPending) {
     // Check if the job's application is available
     const appPath = getAppPathForJob(firstPending);
@@ -3010,9 +3151,20 @@ async function checkAndStartJob(job: RenderJob) {
 
   if (frames.length === 0) return;
 
+  const policy = renderPolicy?.existingFrames ?? null;   // null: ask the user
+
   // Blender and Nuke jobs skip frames that are already rendered by themselves (unless set to overwrite)
-  if ((job.applicationType === ApplicationType.BLENDER || job.applicationType === ApplicationType.NUKE) &&
-      (job.appSettings as any)?.skipExisting !== false) {
+  if (job.applicationType === ApplicationType.BLENDER || job.applicationType === ApplicationType.NUKE) {
+    if (policy === 'skip' || policy === 'overwrite') {
+      runSettingsOverrides.set(job.id, { skipExisting: policy === 'skip' });
+      startJobRender(job);
+      return;
+    }
+    if ((job.appSettings as any)?.skipExisting !== false || policy === 'default') {
+      startJobRender(job);
+      return;
+    }
+  } else if (policy === 'overwrite') {
     startJobRender(job);
     return;
   }
@@ -3026,6 +3178,18 @@ async function checkAndStartJob(job: RenderJob) {
   });
   
   if (result.exists && result.frames.length > 0) {
+    if (policy) {
+      // an agent's run: render only the missing frames (the warning's "adjust frame range" choice)
+      const existing = new Set(result.frames.map((f: any) => f.frame));
+      const missing = frames.filter(f => !existing.has(f));
+      if (missing.length === 0) {
+        skipJobAsComplete(job);
+        return;
+      }
+      renderQueue.updateJob(job.id, { frameRanges: framesToRangeString(missing), useCustomFrameRange: true });
+      startJobRender(job);
+      return;
+    }
     overwriteWarning.value = {
       job,
       existingFrames: result.frames,
@@ -3033,6 +3197,17 @@ async function checkAndStartJob(job: RenderJob) {
   } else {
     startJobRender(job);
   }
+}
+
+/** Every frame of the job already exists (agent run skipping existing frames): mark it done and move on */
+function skipJobAsComplete(job: RenderJob) {
+  renderQueue.isRendering = true;
+  renderQueue.isPaused = false;
+  renderQueue.currentJobIndex = renderQueue.jobs.findIndex(j => j.id === job.id);
+  renderQueue.updateJob(job.id, { renderStartTime: null, error: null });
+  renderQueue.completeCurrentJob();
+  announce(`Skipped ${job.fileName}: all frames already exist`);
+  continueQueue();
 }
 
 function startJobRender(job: RenderJob, { resume = false }: { resume?: boolean } = {}) {
@@ -3073,7 +3248,7 @@ function startJobRender(job: RenderJob, { resume = false }: { resume?: boolean }
       frameRanges: frameRange,
       jobId: job.id,
       appType,
-      appSettings: getAppSettingsForJob(job),
+      appSettings: { ...getAppSettingsForJob(job), ...(runSettingsOverrides.get(job.id) || {}) },
       resume,
       skipFailedFrames: settings.continueOnRenderErrors,
     }));
@@ -3146,7 +3321,7 @@ function getAppSettingsForJob(job: RenderJob): any {
 }
 
 async function startNextJob() {
-  const nextJob = renderQueue.pendingJobs[0];
+  const nextJob = renderQueue.runnablePendingJobs[0];
   if (nextJob) {
     await checkAndStartJob(nextJob);
   }
@@ -3193,6 +3368,7 @@ async function resumeRendering() {
 
 async function stopRendering() {
   await (window as any).electronAPI.stopRender();
+  mcpBridge.setStopReason('stopped');
   renderQueue.stopRendering();
   announce('Rendering stopped');
 }

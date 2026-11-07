@@ -35,6 +35,12 @@ export interface SettingsState {
   continueOnRenderErrors: boolean;
   showPreview: boolean;
   previewScale: number;
+
+  // MCP server (lets agents drive the queue; see electron/mcpServer.js)
+  mcpEnabled: boolean;
+  mcpPort: number;
+  /** Agents may set pre-render Python scripts and per-job executable paths */
+  mcpAllowScripts: boolean;
   
   // Application-specific default settings
   appSettings: AppSpecificSettings;
@@ -71,6 +77,8 @@ const DEFAULT_APP_SETTINGS: AppSpecificSettings = {
   },
 };
 
+export const DEFAULT_MCP_PORT = 47770;
+
 export const useSettingsStore = defineStore('settings', {
   state: (): SettingsState => ({
     // Legacy
@@ -85,6 +93,11 @@ export const useSettingsStore = defineStore('settings', {
     continueOnRenderErrors: true,
     showPreview: true,
     previewScale: 100,
+
+    // MCP server
+    mcpEnabled: false,
+    mcpPort: DEFAULT_MCP_PORT,
+    mcpAllowScripts: false,
     
     // App-specific
     appSettings: { ...DEFAULT_APP_SETTINGS },
@@ -154,6 +167,11 @@ export const useSettingsStore = defineStore('settings', {
           this.continueOnRenderErrors = settings.continueOnRenderErrors !== false;
           this.showPreview = settings.showPreview !== false;
           this.previewScale = settings.previewScale || 100;
+
+          // MCP server
+          this.mcpEnabled = settings.mcpEnabled === true;
+          this.mcpPort = Number.isInteger(settings.mcpPort) ? settings.mcpPort : DEFAULT_MCP_PORT;
+          this.mcpAllowScripts = settings.mcpAllowScripts === true;
           
           // App-specific settings
           if (settings.appSettings) {
@@ -182,6 +200,11 @@ export const useSettingsStore = defineStore('settings', {
           continueOnRenderErrors: this.continueOnRenderErrors,
           showPreview: this.showPreview,
           previewScale: this.previewScale,
+
+          // MCP server
+          mcpEnabled: this.mcpEnabled,
+          mcpPort: this.mcpPort,
+          mcpAllowScripts: this.mcpAllowScripts,
           
           // App-specific
           appSettings: this.appSettings,
@@ -289,6 +312,21 @@ export const useSettingsStore = defineStore('settings', {
 
     setPreviewScale(scale: number) {
       this.previewScale = scale;
+      this.saveSettings();
+    },
+
+    setMcpEnabled(enabled: boolean) {
+      this.mcpEnabled = enabled;
+      this.saveSettings();
+    },
+
+    setMcpPort(port: number) {
+      this.mcpPort = port;
+      this.saveSettings();
+    },
+
+    setMcpAllowScripts(allow: boolean) {
+      this.mcpAllowScripts = allow;
       this.saveSettings();
     },
   },

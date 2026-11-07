@@ -1,4 +1,4 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, clipboard } = require('electron');
 
 // Expose IPC functions to renderer
 window.electronAPI = {
@@ -58,7 +58,7 @@ window.electronAPI = {
   // QUEUE PERSISTENCE
   // ============================================================
   saveQueue: (params) => ipcRenderer.invoke('save-queue', params),
-  loadQueue: () => ipcRenderer.invoke('load-queue'),
+  loadQueue: (params) => ipcRenderer.invoke('load-queue', params),
   autoSaveQueue: (queue) => ipcRenderer.invoke('auto-save-queue', queue),
   loadAutoSavedQueue: () => ipcRenderer.invoke('load-auto-saved-queue'),
   
@@ -126,6 +126,23 @@ window.electronAPI = {
   onMenuSaveQueue: (callback) => ipcRenderer.on('menu-save-queue', (event, saveAs) => callback(saveAs)),
   onMenuLoadQueue: (callback) => ipcRenderer.on('menu-load-queue', () => callback()),
   
+  // ============================================================
+  // MCP SERVER (agents)
+  // ============================================================
+  mcpGetStatus: () => ipcRenderer.invoke('mcp-get-status'),
+  mcpGetClients: () => ipcRenderer.invoke('mcp-get-clients'),
+  mcpInstallClient: (clientId) => ipcRenderer.invoke('mcp-install-client', clientId),
+  mcpUninstallClient: (clientId) => ipcRenderer.invoke('mcp-uninstall-client', clientId),
+  mcpClientSnippet: (clientId) => ipcRenderer.invoke('mcp-client-snippet', clientId),
+  onMcpStatus: (callback) => ipcRenderer.on('mcp-status', (event, data) => callback(data)),
+  // the page's side of the server: answers tool calls and reports queue events
+  onMcpRequest: (callback) => ipcRenderer.on('mcp-request', (event, data) => callback(data)),
+  mcpRespond: (response) => ipcRenderer.send('mcp-response', response),
+  mcpEmitEvent: (data) => ipcRenderer.send('mcp-event', data),
+  mcpRendererReady: () => ipcRenderer.send('mcp-renderer-ready'),
+  onMcpHello: (callback) => ipcRenderer.on('mcp-hello', () => callback()),
+  copyText: (text) => clipboard.writeText(String(text ?? '')),
+
   // Remove listeners
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
 };
